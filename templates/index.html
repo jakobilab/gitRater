@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>GitHub Repo Quality Score</title>
+    <style>
+        body { font-family: Arial; padding: 40px; }
+        input[type=text] { width: 400px; padding: 8px; }
+        button { padding: 10px 20px; background: #007bff; color: white; border: none; }
+    </style>
+</head>
+<body>
+
+<h1>GitHub Repo Quality Rater</h1>
+<p>Enter a GitHub repository URL to generate its radar score.</p>
+<h1>How it works</h1>
+<p> Utilize github REST and GraphQL API to grab metrics on popularity, days since last commit, and average days an issue is open to determine overall quality.
+    These values are compared to a dataset of ~40000 maintained repositories to generate a radar chart and a quality score. </p>
+
+<form method="post">
+    <input type="text" name="repo_url" placeholder="https://github.com/owner/repo" required>
+    <button type="submit">Analyze</button>
+</form>
+
+{% if error %}
+<p style="color:red;">{{ error }}</p>
+{% endif %}
+
+</body>
+</html>

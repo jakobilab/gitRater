@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Repo Quality Result</title>
+    <style>
+        body { font-family: Arial; padding: 40px; }
+        img { max-width: 600px; }
+    </style>
+</head>
+<body>
+
+<h1>GitHub Repository Quality Score</h1>
+
+<h2>{{ result.repo }}</h2>
+
+<p><strong>Final Score:</strong> ⭐ {{ result.final_score_1to5|round(2) }} / 5</p>
+
+<h2>Score Breakdown</h2>
+<ul>
+    <li><strong>Days Since Last Commit:</strong>
+        {{ breakdown.days_raw }}
+        → Score (1–5): {{ breakdown.recency_score }}
+    </li>
+
+    <li><strong>Issue Freshness (Avg Days Open):</strong>
+        {{ breakdown.issues_raw }}
+        → Score (1–5): {{ breakdown.issue_score }}
+    </li>
+
+    <li><strong>Popularity (log-scaled):</strong>
+        {{ breakdown.popularity_raw }}
+        → Score (1–5): {{ breakdown.pop_score }}
+    </li>
+
+    <li><strong>Final Score:</strong> {{ breakdown.final_score }} / 5</li>
+</ul>
+
+
+
+
+<img src="data:image/png;base64,{{ chart_data }}" />
+
+<br><br>
+<a href="/">Analyze Another</a>
+<h2>README Badge</h2>
+<p>Copy this Markdown into your README.md:</p>
+
+<div style="background:#f4f4f4; padding:15px; border-radius:8px;">
+    <pre id="badgeBlock">{{ markdown }}</pre>
+    <button onclick="copyBadge()">Copy Markdown</button>
+</div>
+
+<p>Rendered badge:</p>
+<img src="{{ badge_url }}" alt="Repo Quality Badge">
+
+<script>
+function copyBadge() {
+    const text = document.getElementById("badgeBlock").textContent.trim();
+
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(() => {
+            alert("Markdown copied to clipboard!");
+        }).catch(err => {
+            fallbackCopy(text);
+        });
+    } else {
+        fallbackCopy(text);
+    }
+}
+
+function fallbackCopy(text) {
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    document.body.appendChild(textarea);
+    textarea.select();
+    try {
+        document.execCommand("copy");
+        alert("Markdown copied to clipboard!");
+    } catch (err) {
+        alert("Copy failed — please copy manually.");
+    }
+    document.body.removeChild(textarea);
+}
+</script>
+
+
+
+
+</body>
+</html>
