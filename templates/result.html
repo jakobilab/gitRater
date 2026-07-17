@@ -1,62 +1,245 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>Repo Quality Result</title>
-    <style>
-        body { font-family: Arial; padding: 40px; }
-        img { max-width: 600px; }
-    </style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Repo Quality Result — {{ result.repo }}</title>
+<style>
+  :root {
+    --az-red: #AB0520;
+    --az-red-dark: #8B0015;
+    --az-blue: #0C234B;
+    --az-oasis: #378DBD;
+    --az-azurite: #1E5288;
+    --az-warmgray: #F4EDE5;
+    --az-coolgray: #E2E9EB;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--az-warmgray);
+    color: var(--az-blue);
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+  }
+  header {
+    background: #fff;
+    border-bottom: 4px solid var(--az-red);
+    padding: 18px 40px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+  }
+  header img { height: 44px; display: block; }
+  header h1 { font-size: 1.3rem; margin: 0; font-weight: 600; }
+  main { flex: 1; padding: 40px 20px; display: flex; justify-content: center; }
+  .container { max-width: 720px; width: 100%; display: flex; flex-direction: column; gap: 20px; }
+  .card {
+    background: #fff;
+    border-radius: 12px;
+    box-shadow: 0 2px 10px rgba(12, 35, 75, 0.08);
+    padding: 28px 32px;
+  }
+  .card h2 {
+    margin: 0 0 14px;
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--az-red);
+    font-weight: 700;
+  }
+  .score-hero { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px; }
+  .score-hero .repo-name { font-size: 1.3rem; font-weight: 700; word-break: break-word; }
+  .score-hero .score-value { font-size: 2.4rem; font-weight: 700; color: var(--az-red); text-align: right; }
+  .score-hero .score-value span { font-size: 1.1rem; color: #777; font-weight: 400; }
+  .tag-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+  .tag {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    background: var(--az-coolgray);
+    color: var(--az-blue);
+  }
+  .tag.active { background: #e3f3e6; color: #1c7a34; }
+  .tag.stale { background: #fdecec; color: var(--az-red); }
+  .driver-box {
+    background: var(--az-warmgray);
+    border-left: 4px solid var(--az-oasis);
+    border-radius: 6px;
+    padding: 14px 18px;
+  }
+  .driver-box p { margin: 0 0 6px; }
+  .driver-box .meta { font-size: 0.85rem; color: #555; margin: 0; }
+  ul.breakdown { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 10px; }
+  ul.breakdown li {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    border-bottom: 1px solid var(--az-coolgray);
+    padding-bottom: 10px;
+    font-size: 0.95rem;
+  }
+  ul.breakdown li:last-child { border-bottom: none; padding-top: 2px; font-weight: 700; }
+  ul.breakdown .metric-name { color: #555; }
+  ul.breakdown li:last-child .metric-name { color: var(--az-blue); }
+  .chart-wrap { text-align: center; }
+  .chart-wrap img { max-width: 100%; height: auto; border-radius: 8px; }
+  .badge-block {
+    background: var(--az-coolgray);
+    padding: 14px 16px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .badge-block pre {
+    margin: 0;
+    font-size: 0.85rem;
+    overflow-x: auto;
+    color: var(--az-blue);
+  }
+  .badge-block button {
+    background: var(--az-red);
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    padding: 9px 16px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .badge-block button:hover { background: var(--az-red-dark); }
+  .badge-preview { margin-top: 12px; }
+  .back-link {
+    display: inline-block;
+    margin-top: 4px;
+    color: var(--az-azurite);
+    text-decoration: none;
+    font-weight: 600;
+  }
+  .back-link:hover { text-decoration: underline; }
+  footer {
+    background: var(--az-blue);
+    color: #dfe6ee;
+    padding: 20px 40px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
+    font-size: 0.85rem;
+  }
+  footer a { color: #fff; text-decoration: none; }
+  footer a:hover { text-decoration: underline; }
+  .footer-left { font-weight: 600; }
+  .footer-links a { margin-left: 22px; }
+</style>
 </head>
 <body>
 
-<h1>GitHub Repository Quality Score</h1>
+<header>
+    <h1>GitHub Repo Quality Rater</h1>
+    <img src="{{ url_for('static', filename='logo.png') }}" alt="University of Arizona logo">
+</header>
 
-<h2>{{ result.repo }}</h2>
+<main>
+<div class="container">
 
-<p><strong>Final Score:</strong> ⭐ {{ result.final_score_1to5|round(2) }} / 5</p>
+  <div class="card score-hero">
+    <div>
+        <div class="repo-name">{{ result.repo }}</div>
+        <div class="tag-row">
+            <span class="tag {% if breakdown.activity_tag == 'Active' %}active{% elif breakdown.activity_tag == 'Stale' %}stale{% endif %}">{{ breakdown.activity_tag }}</span>
+            <span class="tag {% if breakdown.issue_tag == 'Responsive' %}active{% elif breakdown.issue_tag == 'Backlogged' %}stale{% endif %}">{{ breakdown.issue_tag }}</span>
+            <span class="tag {% if breakdown.popularity_tag == 'Popular' %}active{% elif breakdown.popularity_tag == 'Niche' %}stale{% endif %}">{{ breakdown.popularity_tag }}</span>
+        </div>
+    </div>
+    <div class="score-value">{{ breakdown.final_score }}<span> / 5</span></div>
+  </div>
 
-<h2>Score Breakdown</h2>
-<ul>
-    <li><strong>Days Since Last Commit:</strong>
-        {{ breakdown.days_raw }}
-        → Score (1–5): {{ breakdown.recency_score }}
-    </li>
+  <div class="card">
+    <h2>Recency</h2>
+    <p style="margin:0;">
+        Estimated last commit: <strong>{{ breakdown.last_commit_date }}</strong>
+        ({{ breakdown.days_raw }} days ago)
+    </p>
+  </div>
 
-    <li><strong>Issue Freshness (Avg Days Open):</strong>
-        {{ breakdown.issues_raw }}
-        → Score (1–5): {{ breakdown.issue_score }}
-    </li>
+  <div class="card">
+    <h2>What's driving this score</h2>
+    <div class="driver-box">
+        <p>{{ driver.summary }}</p>
+        <p class="meta">
+            Strongest: {{ driver.strongest_label }} (z = {{ driver.strongest_z }})
+            &nbsp;&middot;&nbsp;
+            Weakest: {{ driver.weakest_label }} (z = {{ driver.weakest_z }})
+        </p>
+    </div>
+  </div>
 
-    <li><strong>Popularity (log-scaled):</strong>
-        {{ breakdown.popularity_raw }}
-        → Score (1–5): {{ breakdown.pop_score }}
-    </li>
+  <div class="card">
+    <h2>Score breakdown</h2>
+    <ul class="breakdown">
+        <li>
+            <span class="metric-name">Days since last commit</span>
+            <span>{{ breakdown.days_raw }} &rarr; {{ breakdown.recency_score }}</span>
+        </li>
+        <li>
+            <span class="metric-name">{{ breakdown.issue_label }}</span>
+            <span>{{ breakdown.issues_raw }} (health {{ breakdown.backlog_health }}) &rarr; {{ breakdown.issue_score }}</span>
+        </li>
+        <li>
+            <span class="metric-name">Popularity (log-scaled)</span>
+            <span>{{ breakdown.popularity_raw }} &rarr; {{ breakdown.pop_score }}</span>
+        </li>
+        <li>
+            <span class="metric-name">Final score</span>
+            <span>{{ breakdown.final_score }} / 5</span>
+        </li>
+    </ul>
+  </div>
 
-    <li><strong>Final Score:</strong> {{ breakdown.final_score }} / 5</li>
-</ul>
+  <div class="card chart-wrap">
+    <h2 style="text-align:left;">Radar view</h2>
+    <img src="data:image/png;base64,{{ chart_data }}" alt="Radar chart of repo quality components">
+  </div>
 
+  <div class="card">
+    <h2>README badge</h2>
+    <p style="margin-top:0; color:#555;">Copy this Markdown into your README.md:</p>
+    <div class="badge-block">
+        <pre id="badgeBlock">{{ markdown }}</pre>
+        <button onclick="copyBadge()">Copy Markdown</button>
+    </div>
+    <div class="badge-preview">
+        <img src="{{ badge_url }}" alt="Repo Quality Badge">
+    </div>
+  </div>
 
+  <a class="back-link" href="/">&larr; Analyze another repo</a>
 
-
-<img src="data:image/png;base64,{{ chart_data }}" />
-
-<br><br>
-<a href="/">Analyze Another</a>
-<h2>README Badge</h2>
-<p>Copy this Markdown into your README.md:</p>
-
-<div style="background:#f4f4f4; padding:15px; border-radius:8px;">
-    <pre id="badgeBlock">{{ markdown }}</pre>
-    <button onclick="copyBadge()">Copy Markdown</button>
 </div>
+</main>
 
-<p>Rendered badge:</p>
-<img src="{{ badge_url }}" alt="Repo Quality Badge">
+<footer>
+    <div class="footer-left"><a href="https://jakobilab.org/" target="_blank" rel="noopener">Jakobi Lab</a></div>
+    <div class="footer-links">
+        <a href="https://github.com/jakobilab/gitRater" target="_blank" rel="noopener">Source code</a>
+        <a href="https://github.com/jakobilab/integrationStudy" target="_blank" rel="noopener">Continuous Integration Study 2026</a>
+        <a href="https://phoenixmed.arizona.edu/tcrc" target="_blank" rel="noopener">TCRC</a>
+    </div>
+</footer>
 
 <script>
 function copyBadge() {
     const text = document.getElementById("badgeBlock").textContent.trim();
-
     if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(text).then(() => {
             alert("Markdown copied to clipboard!");
@@ -67,7 +250,6 @@ function copyBadge() {
         fallbackCopy(text);
     }
 }
-
 function fallbackCopy(text) {
     const textarea = document.createElement("textarea");
     textarea.value = text;
@@ -82,9 +264,6 @@ function fallbackCopy(text) {
     document.body.removeChild(textarea);
 }
 </script>
-
-
-
 
 </body>
 </html>

@@ -1,29 +1,201 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>GitHub Repo Quality Score</title>
-    <style>
-        body { font-family: Arial; padding: 40px; }
-        input[type=text] { width: 400px; padding: 8px; }
-        button { padding: 10px 20px; background: #007bff; color: white; border: none; }
-    </style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GitHub Repo Quality Rater</title>
+<style>
+  :root {
+    --az-red: #AB0520;
+    --az-red-dark: #8B0015;
+    --az-blue: #0C234B;
+    --az-oasis: #378DBD;
+    --az-azurite: #1E5288;
+    --az-warmgray: #F4EDE5;
+    --az-coolgray: #E2E9EB;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--az-warmgray);
+    color: var(--az-blue);
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+  }
+  header {
+    background: #fff;
+    border-bottom: 4px solid var(--az-red);
+    padding: 18px 40px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+  }
+  header img { height: 44px; display: block; }
+  header h1 { font-size: 1.3rem; margin: 0; font-weight: 600; }
+  main {
+    flex: 1;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    padding: 60px 20px;
+  }
+  .card {
+    background: #fff;
+    border-radius: 12px;
+    box-shadow: 0 2px 10px rgba(12, 35, 75, 0.08);
+    padding: 40px;
+    max-width: 560px;
+    width: 100%;
+  }
+  .card h2 { margin: 0 0 10px; color: var(--az-red); font-size: 1.15rem; }
+  .card p.lede { color: #555; line-height: 1.55; margin: 0 0 4px; }
+  form { display: flex; gap: 10px; margin-top: 26px; }
+  input[type=text] {
+    flex: 1;
+    padding: 13px 14px;
+    border: 1px solid var(--az-coolgray);
+    border-radius: 8px;
+    font-size: 1rem;
+  }
+  input[type=text]:focus {
+    outline: none;
+    border-color: var(--az-oasis);
+    box-shadow: 0 0 0 3px rgba(55, 141, 189, 0.25);
+  }
+  button {
+    padding: 13px 26px;
+    background: var(--az-red);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background .15s;
+    white-space: nowrap;
+  }
+  button:hover { background: var(--az-red-dark); }
+  .hint { margin-top: 14px; font-size: 0.85rem; color: #888; }
+  .error {
+    margin-top: 18px;
+    padding: 12px 16px;
+    background: #fdecec;
+    border-left: 4px solid var(--az-red);
+    border-radius: 4px;
+    color: var(--az-red);
+    font-size: 0.9rem;
+  }
+  .loading-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(244, 237, 229, 0.94);
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    z-index: 1000;
+  }
+  .loading-overlay.active { display: flex; }
+  .spinner {
+    width: 46px;
+    height: 46px;
+    border: 5px solid var(--az-coolgray);
+    border-top-color: var(--az-red);
+    border-radius: 50%;
+    animation: spin 0.85s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .loading-text {
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: var(--az-blue);
+    margin: 0;
+  }
+  .loading-sub {
+    font-size: 0.85rem;
+    color: #666;
+    margin: 0;
+    max-width: 320px;
+    text-align: center;
+    line-height: 1.5;
+  }
+  footer {
+    background: var(--az-blue);
+    color: #dfe6ee;
+    padding: 20px 40px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
+    font-size: 0.85rem;
+  }
+  footer a { color: #fff; text-decoration: none; }
+  footer a:hover { text-decoration: underline; }
+  .footer-left { font-weight: 600; }
+  .footer-links a { margin-left: 22px; }
+</style>
 </head>
 <body>
 
-<h1>GitHub Repo Quality Rater</h1>
-<p>Enter a GitHub repository URL to generate its radar score.</p>
-<h1>How it works</h1>
-<p> Utilize github REST and GraphQL API to grab metrics on popularity, days since last commit, and average days an issue is open to determine overall quality.
-    These values are compared to a dataset of ~40000 maintained repositories to generate a radar chart and a quality score. </p>
+<header>
+    <h1>GitHub Repo Quality Rater</h1>
+    <img src="{{ url_for('static', filename='logo.png') }}" alt="University of Arizona logo">
+</header>
 
-<form method="post">
-    <input type="text" name="repo_url" placeholder="https://github.com/owner/repo" required>
-    <button type="submit">Analyze</button>
-</form>
+<main>
+  <div class="card">
+    <h2>Check a repository's quality score</h2>
+    <p class="lede">
+        Pulls GitHub activity, issue-response health, and popularity for a repo,
+        benchmarks them against roughly 40,000 maintained repositories, and
+        returns a single 1&ndash;5 quality score with a full breakdown.
+    </p>
 
-{% if error %}
-<p style="color:red;">{{ error }}</p>
-{% endif %}
+    <form method="post">
+        <input type="text" name="repo_url" placeholder="https://github.com/owner/repo" required autofocus>
+        <button type="submit">Analyze</button>
+    </form>
+    <p class="hint">Example: https://github.com/pandas-dev/pandas</p>
+
+    {% if error %}
+    <div class="error">{{ error }}</div>
+    {% endif %}
+  </div>
+</main>
+
+<div id="loadingOverlay" class="loading-overlay">
+    <div class="spinner"></div>
+    <p class="loading-text">Analyzing repository&hellip;</p>
+    <p class="loading-sub">Pulling GitHub metrics and comparing them against the benchmark dataset. This usually takes a few seconds.</p>
+</div>
+
+<footer>
+    <div class="footer-left"><a href="https://jakobilab.org/" target="_blank" rel="noopener">Jakobi Lab</a></div>
+    <div class="footer-links">
+        <a href="https://github.com/jakobilab/gitRater" target="_blank" rel="noopener">Source code</a>
+        <a href="https://github.com/jakobilab/integrationStudy" target="_blank" rel="noopener">Continuous Integration Study 2026</a>
+        <a href="https://phoenixmed.arizona.edu/tcrc" target="_blank" rel="noopener">TCRC</a>
+    </div>
+</footer>
+
+<script>
+(function () {
+    const form = document.querySelector("form");
+    const overlay = document.getElementById("loadingOverlay");
+    const submitBtn = form.querySelector("button[type=submit]");
+
+    form.addEventListener("submit", function () {
+        overlay.classList.add("active");
+        submitBtn.disabled = true;
+        submitBtn.textContent = "Analyzing…";
+    });
+})();
+</script>
 
 </body>
 </html>

@@ -2,6 +2,7 @@
 import os
 import io
 import base64
+from datetime import date, timedelta
 from flask import Flask, render_template, request
 import matplotlib
 matplotlib.use("Agg")
@@ -40,16 +41,98 @@ winsor_max = bench["z_winsor"].max()
 mean_days = bench["days_since_last_commit"].mean()
 sd_days   = bench["days_since_last_commit"].std()
 
-mean_issue = bench["avg_issue_days_open"].mean()
-sd_issue   = bench["avg_issue_days_open"].std()
+# R computes the issue component from median_issue_days_open, run through a
+# saturating transform (backlog_health), NOT a straight z-score of raw days.
+# Prefer that field if the benchmark has it; fall back gracefully otherwise.
+if "median_issue_days_open" in bench.columns:
+    ISSUE_FIELD = "median_issue_days_open"
+    ISSUE_FIELD_LABEL = "Median issue days open"
+elif "avg_issue_days_open" in bench.columns:
+    ISSUE_FIELD = "avg_issue_days_open"
+    ISSUE_FIELD_LABEL = "Avg issue days open"
+else:
+    raise KeyError(
+        "all_repos_with_scores.csv has neither 'median_issue_days_open' nor "
+        "'avg_issue_days_open' — can't compute the issue-backlog component."
+    )
+
+# backlog_health = 1 / (1 + issue_days_open)  --  matches the R pipeline exactly
+bench["backlog_health"] = 1.0 / (1.0 + bench[ISSUE_FIELD].astype(float))
+mean_backlog = bench["backlog_health"].mean()
+sd_backlog   = bench["backlog_health"].std()
 
 mean_pop = bench["popularity"].mean()
 sd_pop   = bench["popularity"].std()
 
 # For radar chart scaling
-global_max = bench[["days_since_last_commit", "avg_issue_days_open", "popularity"]].max()
-global_min = bench[["days_since_last_commit", "avg_issue_days_open", "popularity"]].min()
+global_max = bench[["days_since_last_commit", ISSUE_FIELD, "popularity"]].max()
+global_min = bench[["days_since_last_commit", ISSUE_FIELD, "popularity"]].min()
 
+
+
+# =====================================================
+# HELPERS — RECENCY DATE, ACTIVITY TAG, SCORE DRIVER
+# =====================================================
+def get_last_commit_date(days_since_last_commit):
+    """Approximate calendar date of the last commit, plus a plain-language
+    activity tag. GitHub only gives us a day count, so the date is an
+    estimate relative to today."""
+    approx_date = date.today() - timedelta(days=round(days_since_last_commit))
+
+    if days_since_last_commit <= 30:
+        tag = "Active"
+    elif days_since_last_commit <= 90:
+        tag = "Moderately active"
+    elif days_since_last_commit <= 180:
+        tag = "Slowing down"
+    else:
+        tag = "Stale"
+
+    return approx_date, tag
+
+
+# Tier labels for the other two components, based on each metric's own
+# 1-5 sub-score so they're on the same footing as the activity tag above.
+# Ordered highest threshold first; first match wins.
+ISSUE_HEALTH_TIERS = [(4.0, "Responsive"), (2.0, "Steady"), (0.0, "Backlogged")]
+POPULARITY_TIERS   = [(4.0, "Popular"), (2.0, "Established"), (0.0, "Niche")]
+
+
+def get_score_tag(score_1to5, tiers):
+    """Map a 1-5 sub-score to a plain-language tier label."""
+    for threshold, label in tiers:
+        if score_1to5 >= threshold:
+            return label
+    return tiers[-1][1]
+
+
+def get_driver_summary(result):
+    """Identify which component is pulling the final score up or down the
+    most. All three z-scores share the same units, so comparing them
+    directly is meaningful."""
+    components = [
+        ("Recency (commit activity)", result["recency_z"]),
+        ("Issue backlog health", result["issue_z"]),
+        ("Popularity", result["pop_z"]),
+    ]
+    strongest = max(components, key=lambda c: c[1])
+    weakest = min(components, key=lambda c: c[1])
+
+    if strongest[0] == weakest[0]:
+        summary = "All three components are roughly balanced for this repo."
+    else:
+        summary = (
+            f"{strongest[0]} is pulling the score up the most. "
+            f"{weakest[0]} is holding it back the most."
+        )
+
+    return {
+        "strongest_label": strongest[0],
+        "strongest_z": round(strongest[1], 3),
+        "weakest_label": weakest[0],
+        "weakest_z": round(weakest[1], 3),
+        "summary": summary,
+    }
 
 
 # =====================================================
@@ -74,15 +157,27 @@ def get_repo_quality(repo_url, token):
         days = bench["days_since_last_commit"].max()
     days = float(days)
 
-    issues = result.get("avg_issue_days_open")
-    if issues is None or issues == 0:
-        issues = 1
-    issues = float(issues)
+    # Issue backlog: pull whichever field the benchmark was built on. Fall back
+    # to the other naming convention if the scanner used it instead.
+    issue_raw = result.get(ISSUE_FIELD)
+    if issue_raw is None:
+        issue_raw = result.get("median_issue_days_open")
+        if issue_raw is None:
+            issue_raw = result.get("avg_issue_days_open")
+    if issue_raw is None:
+        # Worst-case default, same treatment as a missing recency value above.
+        issue_raw = bench[ISSUE_FIELD].max()
+    issue_raw = float(issue_raw)
 
-    # --- Compute R-style Z-scores ---
+    # R's saturating transform: fast-closing issue trackers cluster near 1,
+    # slow ones decay toward 0 without a hard linear penalty.
+    backlog_health = 1.0 / (1.0 + issue_raw)
+
+    # --- Z-scores (matches R exactly: recency_z = scale(-days),
+    #     issue_z = scale(backlog_health), pop_z = scale(popularity)) ---
     recency_z = -(days - mean_days) / sd_days
-    issue_z   = -(issues - mean_issue) / sd_issue
-    pop_z     =  (popularity - mean_pop) / sd_pop
+    issue_z   = (backlog_health - mean_backlog) / sd_backlog
+    pop_z     = (popularity - mean_pop) / sd_pop
 
     # Mean Z
     z_mean = np.mean([recency_z, issue_z, pop_z])
@@ -103,12 +198,22 @@ def get_repo_quality(repo_url, token):
     issue_score_1to5   = 1 + (issue_w   - winsor_min) * (4 / (winsor_max - winsor_min))
     pop_score_1to5     = 1 + (pop_w     - winsor_min) * (4 / (winsor_max - winsor_min))
 
+    last_commit_date, activity_tag = get_last_commit_date(days)
+    issue_tag = get_score_tag(issue_score_1to5, ISSUE_HEALTH_TIERS)
+    popularity_tag = get_score_tag(pop_score_1to5, POPULARITY_TIERS)
 
-    return {
+    result_out = {
         "repo": repo_full,
         "days_since_last_commit": days,
-        "avg_issue_days_open": issues,
+        "last_commit_date": last_commit_date.isoformat(),
+        "activity_tag": activity_tag,
+        "issue_metric_field": ISSUE_FIELD,
+        "issue_metric_label": ISSUE_FIELD_LABEL,
+        "issue_metric_raw": issue_raw,
+        "issue_tag": issue_tag,
+        "backlog_health": backlog_health,
         "popularity": popularity,
+        "popularity_tag": popularity_tag,
         "final_score_1to5": final_score,
         "recency_z": recency_z,
         "issue_z": issue_z,
@@ -119,6 +224,8 @@ def get_repo_quality(repo_url, token):
         "issue_score_1to5": issue_score_1to5,
         "pop_score_1to5": pop_score_1to5
     }
+    result_out["driver"] = get_driver_summary(result_out)
+    return result_out
 
 
 
@@ -126,22 +233,22 @@ def get_repo_quality(repo_url, token):
 # RADAR CHART → BASE64 PNG
 # =====================================================
 def make_radar_chart(result):
-    labels = ["Days Since Last Commit", "Avg Issue Days Open", "Popularity"]
+    labels = ["Days Since Last Commit", result["issue_metric_label"], "Popularity"]
 
     raw_vals = np.array([
         result["days_since_last_commit"],
-        result["avg_issue_days_open"],
+        result["issue_metric_raw"],
         result["popularity"]
     ])
 
     min_vals = np.array([
         global_min["days_since_last_commit"],
-        global_min["avg_issue_days_open"],
+        global_min[ISSUE_FIELD],
         global_min["popularity"]
     ])
     max_vals = np.array([
         global_max["days_since_last_commit"],
-        global_max["avg_issue_days_open"],
+        global_max[ISSUE_FIELD],
         global_max["popularity"]
     ])
 
@@ -247,8 +354,16 @@ def index():
                 chart_data=chart,
                 breakdown={
                     "days_raw": result["days_since_last_commit"],
-                    "issues_raw": result["avg_issue_days_open"],
+                    "last_commit_date": result["last_commit_date"],
+                    "activity_tag": result["activity_tag"],
+
+                    "issue_label": result["issue_metric_label"],
+                    "issues_raw": round(result["issue_metric_raw"], 2),
+                    "backlog_health": round(result["backlog_health"], 3),
+                    "issue_tag": result["issue_tag"],
+
                     "popularity_raw": round(result["popularity"], 2),
+                    "popularity_tag": result["popularity_tag"],
 
                     "final_score": round(result["final_score_1to5"], 2),
                     "recency_z": round(result["recency_z"], 3),
@@ -261,6 +376,7 @@ def index():
                     "issue_score": round(result["issue_score_1to5"], 2),
                     "pop_score": round(result["pop_score_1to5"], 2),
                 },
+                driver=result["driver"],
 
                 # --- NEW VALUES SENT TO TEMPLATE ---
                 badge_url=badge_url,
@@ -308,7 +424,10 @@ def api_badge():
             "repo": result["repo"],
             "score": score,
             "badge_url": badge_url,
-            "markdown": markdown
+            "markdown": markdown,
+            "last_commit_date": result["last_commit_date"],
+            "activity_tag": result["activity_tag"],
+            "driver": result["driver"]
         })
 
     except Exception as e:
@@ -322,7 +441,6 @@ def api_badge():
 if __name__ == "__main__":
     app.run(
         host="0.0.0.0",   
-        port=5000,        
+        port= 8030,        
         debug=True
     )
-
