@@ -2,6 +2,8 @@
 import os
 import io
 import base64
+import logging
+import traceback
 from datetime import date, timedelta
 from flask import Flask, render_template, request
 import matplotlib
@@ -16,18 +18,16 @@ from flask import jsonify
 from check_bioinfo_testing import scan_repo
 
 
-# =====================================================
-# CONFIG
-# =====================================================
+
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")   # SAFER — set externally
 BENCHMARK_FILE = "all_repos_with_scores.csv"
 
 app = Flask(__name__)
- 
 
-# =====================================================
-# LOAD BENCHMARK (USE R-COMPUTED VALUES)
-# =====================================================
+logging.basicConfig(level=logging.DEBUG)
+
+
+
 if not os.path.exists(BENCHMARK_FILE):
     raise FileNotFoundError("Missing all_repos_with_scores.csv")
 
@@ -37,13 +37,11 @@ bench = pd.read_csv(BENCHMARK_FILE)
 winsor_min = bench["z_winsor"].min()
 winsor_max = bench["z_winsor"].max()
 
-# For computing NEW repo Z-scores, we still need the raw distributions
 mean_days = bench["days_since_last_commit"].mean()
 sd_days   = bench["days_since_last_commit"].std()
 
 # R computes the issue component from median_issue_days_open, run through a
-# saturating transform (backlog_health), NOT a straight z-score of raw days.
-# Prefer that field if the benchmark has it; fall back gracefully otherwise.
+
 if "median_issue_days_open" in bench.columns:
     ISSUE_FIELD = "median_issue_days_open"
     ISSUE_FIELD_LABEL = "Median issue days open"
@@ -70,9 +68,6 @@ global_min = bench[["days_since_last_commit", ISSUE_FIELD, "popularity"]].min()
 
 
 
-# =====================================================
-# HELPERS — RECENCY DATE, ACTIVITY TAG, SCORE DRIVER
-# =====================================================
 def get_last_commit_date(days_since_last_commit):
     """Approximate calendar date of the last commit, plus a plain-language
     activity tag. GitHub only gives us a day count, so the date is an
@@ -91,9 +86,7 @@ def get_last_commit_date(days_since_last_commit):
     return approx_date, tag
 
 
-# Tier labels for the other two components, based on each metric's own
-# 1-5 sub-score so they're on the same footing as the activity tag above.
-# Ordered highest threshold first; first match wins.
+
 ISSUE_HEALTH_TIERS = [(4.0, "Responsive"), (2.0, "Steady"), (0.0, "Backlogged")]
 POPULARITY_TIERS   = [(4.0, "Popular"), (2.0, "Established"), (0.0, "Niche")]
 
@@ -104,6 +97,15 @@ def get_score_tag(score_1to5, tiers):
         if score_1to5 >= threshold:
             return label
     return tiers[-1][1]
+
+
+def _to_float_or_none(v):
+    if v is None or v == "":
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
 
 
 def get_driver_summary(result):
@@ -135,9 +137,6 @@ def get_driver_summary(result):
     }
 
 
-# =====================================================
-# CALCULATE REPO QUALITY — MATCHES R EXACTLY
-# =====================================================
 def get_repo_quality(repo_url, token):
     repo_full = repo_url.replace("https://github.com/", "").strip("/")
     result = scan_repo(token, repo_full)
@@ -145,36 +144,28 @@ def get_repo_quality(repo_url, token):
         raise RuntimeError("Scan failed")
 
     # Popularity metric identical to R
-    popularity = np.log1p(
-        float(result.get("stars", 0)) +
-        float(result.get("forks", 0)) +
-        float(result.get("watchers", 0))
-    )
+    stars = _to_float_or_none(result.get("stars")) or 0.0
+    forks = _to_float_or_none(result.get("forks")) or 0.0
+    watchers = _to_float_or_none(result.get("watchers")) or 0.0
+    popularity = np.log1p(stars + forks + watchers)
 
-    # Clean fields identical to your R pipeline
-    days = result.get("days_since_last_commit")
+    days = _to_float_or_none(result.get("days_since_last_commit"))
     if days is None:
-        days = bench["days_since_last_commit"].max()
-    days = float(days)
+        days = float(bench["days_since_last_commit"].max())
 
-    # Issue backlog: pull whichever field the benchmark was built on. Fall back
-    # to the other naming convention if the scanner used it instead.
-    issue_raw = result.get(ISSUE_FIELD)
+    issue_raw = _to_float_or_none(result.get(ISSUE_FIELD))
     if issue_raw is None:
-        issue_raw = result.get("median_issue_days_open")
-        if issue_raw is None:
-            issue_raw = result.get("avg_issue_days_open")
+        issue_raw = _to_float_or_none(result.get("median_issue_days_open"))
     if issue_raw is None:
-        # Worst-case default, same treatment as a missing recency value above.
-        issue_raw = bench[ISSUE_FIELD].max()
-    issue_raw = float(issue_raw)
+        issue_raw = _to_float_or_none(result.get("avg_issue_days_open"))
+    if issue_raw is None:
+        issue_raw = float(bench[ISSUE_FIELD].max())
 
     # R's saturating transform: fast-closing issue trackers cluster near 1,
     # slow ones decay toward 0 without a hard linear penalty.
     backlog_health = 1.0 / (1.0 + issue_raw)
 
-    # --- Z-scores (matches R exactly: recency_z = scale(-days),
-    #     issue_z = scale(backlog_health), pop_z = scale(popularity)) ---
+    # --- Z-scores (matches R exactly: recency_z = scale(-days),issue_z = scale(backlog_health), pop_z = scale(popularity)) ---
     recency_z = -(days - mean_days) / sd_days
     issue_z   = (backlog_health - mean_backlog) / sd_backlog
     pop_z     = (popularity - mean_pop) / sd_pop
@@ -384,6 +375,7 @@ def index():
             )
 
         except Exception as e:
+            app.logger.error("Error in / (index) route:\n%s", traceback.format_exc())
             return render_template("index.html", error=str(e))
 
     return render_template("index.html")
@@ -431,6 +423,7 @@ def api_badge():
         })
 
     except Exception as e:
+        app.logger.error("Error in /api/badge route:\n%s", traceback.format_exc())
         return jsonify({"error": str(e)}), 500
 
 
