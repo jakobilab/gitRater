@@ -177,9 +177,9 @@
     <div class="driver-box">
         <p>{{ driver.summary }}</p>
         <p class="meta">
-            Strongest: {{ driver.strongest_label }} (z = {{ driver.strongest_z }})
+            Strongest: {{ driver.strongest_label }} (score = {{ driver.strongest_score }} / 5)
             &nbsp;&middot;&nbsp;
-            Weakest: {{ driver.weakest_label }} (z = {{ driver.weakest_z }})
+            Weakest: {{ driver.weakest_label }} (score = {{ driver.weakest_score }} / 5)
         </p>
     </div>
   </div>
@@ -193,7 +193,7 @@
         </li>
         <li>
             <span class="metric-name">{{ breakdown.issue_label }}</span>
-            <span>{{ breakdown.issues_raw }} (health {{ breakdown.backlog_health }}) &rarr; {{ breakdown.issue_score }}</span>
+            <span>{{ breakdown.issues_raw }} &rarr; {{ breakdown.issue_score }}</span>
         </li>
         <li>
             <span class="metric-name">Popularity (log-scaled)</span>

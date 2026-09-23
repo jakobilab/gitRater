@@ -1,71 +1,70 @@
 #!/usr/bin/env python3
+
 import os
 import io
 import base64
 import logging
 import traceback
 from datetime import date, timedelta
-from flask import Flask, render_template, request
+from flask import Flask, render_template, request, jsonify
 import matplotlib
 matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
-from math import log1p
-from flask import jsonify
 
 from check_bioinfo_testing import scan_repo
 
 
-
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")   # SAFER — set externally
-BENCHMARK_FILE = "all_repos_with_scores.csv"
 
 app = Flask(__name__)
 
 logging.basicConfig(level=logging.DEBUG)
 
 
+# =====================================================
+# ABSOLUTE SCORING ANCHORS (tune these — no corpus needed)
+# =====================================================
 
-if not os.path.exists(BENCHMARK_FILE):
-    raise FileNotFoundError("Missing all_repos_with_scores.csv")
 
-bench = pd.read_csv(BENCHMARK_FILE)
+RECENCY_DAYS_ANCHORS  = [0,   14,  30,  60,  90,  180, 365, 730]
+RECENCY_SCORE_ANCHORS = [5.0, 4.5, 4.0, 3.5, 3.0, 2.0, 1.3, 0.0]
 
-# Use R-computed winsorized Z values directly
-winsor_min = bench["z_winsor"].min()
-winsor_max = bench["z_winsor"].max()
+# Median (or avg) days an issue stays open -> score. 
+ISSUE_DAYS_ANCHORS  = [0,   7,   14,  30,  60,  120, 365]
+ISSUE_SCORE_ANCHORS = [5.0, 4.5, 4.0, 3.5, 3.0, 2.0, 1.0]
 
-mean_days = bench["days_since_last_commit"].mean()
-sd_days   = bench["days_since_last_commit"].std()
+# log10(stars + forks + watchers + 1) -> score. a point per order of magnitude
+POPULARITY_LOG10_ANCHORS = [0.0, 1.0, 2.0, 3.0, 4.0]   
+POPULARITY_SCORE_ANCHORS = [1.0, 2.0, 3.0, 4.0, 5.0]
 
-# R computes the issue component from median_issue_days_open, run through a
+# What to assume when GitHub gives us no data for a metric at all 
 
-if "median_issue_days_open" in bench.columns:
-    ISSUE_FIELD = "median_issue_days_open"
-    ISSUE_FIELD_LABEL = "Median issue days open"
-elif "avg_issue_days_open" in bench.columns:
-    ISSUE_FIELD = "avg_issue_days_open"
-    ISSUE_FIELD_LABEL = "Avg issue days open"
-else:
-    raise KeyError(
-        "all_repos_with_scores.csv has neither 'median_issue_days_open' nor "
-        "'avg_issue_days_open' — can't compute the issue-backlog component."
-    )
+DAYS_IF_MISSING = RECENCY_DAYS_ANCHORS[-1]
+ISSUE_DAYS_IF_MISSING = ISSUE_DAYS_ANCHORS[-1]
 
-# backlog_health = 1 / (1 + issue_days_open)  --  matches the R pipeline exactly
-bench["backlog_health"] = 1.0 / (1.0 + bench[ISSUE_FIELD].astype(float))
-mean_backlog = bench["backlog_health"].mean()
-sd_backlog   = bench["backlog_health"].std()
 
-mean_pop = bench["popularity"].mean()
-sd_pop   = bench["popularity"].std()
+def _to_float_or_none(v):
+    if v is None or v == "":
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
 
-# For radar chart scaling
-global_max = bench[["days_since_last_commit", ISSUE_FIELD, "popularity"]].max()
-global_min = bench[["days_since_last_commit", ISSUE_FIELD, "popularity"]].min()
 
+def score_recency(days_since_last_commit):
+    return float(np.interp(days_since_last_commit, RECENCY_DAYS_ANCHORS, RECENCY_SCORE_ANCHORS))
+
+
+def score_issue_backlog(issue_days_open):
+    return float(np.interp(issue_days_open, ISSUE_DAYS_ANCHORS, ISSUE_SCORE_ANCHORS))
+
+
+def score_popularity(total_reach):
+    log_val = np.log10(1.0 + max(total_reach, 0.0))
+    return float(np.interp(log_val, POPULARITY_LOG10_ANCHORS, POPULARITY_SCORE_ANCHORS))
 
 
 def get_last_commit_date(days_since_last_commit):
@@ -86,7 +85,6 @@ def get_last_commit_date(days_since_last_commit):
     return approx_date, tag
 
 
-
 ISSUE_HEALTH_TIERS = [(4.0, "Responsive"), (2.0, "Steady"), (0.0, "Backlogged")]
 POPULARITY_TIERS   = [(4.0, "Popular"), (2.0, "Established"), (0.0, "Niche")]
 
@@ -99,23 +97,14 @@ def get_score_tag(score_1to5, tiers):
     return tiers[-1][1]
 
 
-def _to_float_or_none(v):
-    if v is None or v == "":
-        return None
-    try:
-        return float(v)
-    except (TypeError, ValueError):
-        return None
-
-
 def get_driver_summary(result):
     """Identify which component is pulling the final score up or down the
-    most. All three z-scores share the same units, so comparing them
-    directly is meaningful."""
+    most. All three sub-scores already live on the same 1-5 scale, so
+    comparing them directly is meaningful — no z-scores needed."""
     components = [
-        ("Recency (commit activity)", result["recency_z"]),
-        ("Issue backlog health", result["issue_z"]),
-        ("Popularity", result["pop_z"]),
+        ("Recency (commit activity)", result["recency_score_1to5"]),
+        ("Issue backlog health", result["issue_score_1to5"]),
+        ("Popularity", result["pop_score_1to5"]),
     ]
     strongest = max(components, key=lambda c: c[1])
     weakest = min(components, key=lambda c: c[1])
@@ -130,9 +119,9 @@ def get_driver_summary(result):
 
     return {
         "strongest_label": strongest[0],
-        "strongest_z": round(strongest[1], 3),
+        "strongest_score": round(strongest[1], 2),
         "weakest_label": weakest[0],
-        "weakest_z": round(weakest[1], 3),
+        "weakest_score": round(weakest[1], 2),
         "summary": summary,
     }
 
@@ -143,51 +132,35 @@ def get_repo_quality(repo_url, token):
     if not result:
         raise RuntimeError("Scan failed")
 
-    # Popularity metric identical to R
     stars = _to_float_or_none(result.get("stars")) or 0.0
     forks = _to_float_or_none(result.get("forks")) or 0.0
     watchers = _to_float_or_none(result.get("watchers")) or 0.0
-    popularity = np.log1p(stars + forks + watchers)
+    total_reach = stars + forks + watchers
+    popularity_log = np.log10(1.0 + total_reach)
 
     days = _to_float_or_none(result.get("days_since_last_commit"))
     if days is None:
-        days = float(bench["days_since_last_commit"].max())
+        days = float(DAYS_IF_MISSING)
 
-    issue_raw = _to_float_or_none(result.get(ISSUE_FIELD))
-    if issue_raw is None:
+
+    if _to_float_or_none(result.get("median_issue_days_open")) is not None:
         issue_raw = _to_float_or_none(result.get("median_issue_days_open"))
-    if issue_raw is None:
+        issue_metric_label = "Median issue days open"
+    elif _to_float_or_none(result.get("avg_issue_days_open")) is not None:
         issue_raw = _to_float_or_none(result.get("avg_issue_days_open"))
-    if issue_raw is None:
-        issue_raw = float(bench[ISSUE_FIELD].max())
+        issue_metric_label = "Avg issue days open"
+    else:
+        issue_raw = float(ISSUE_DAYS_IF_MISSING)
+        issue_metric_label = "Issue days open (no data — treated as worst-case)"
 
-    # R's saturating transform: fast-closing issue trackers cluster near 1,
-    # slow ones decay toward 0 without a hard linear penalty.
+    # Kept only as a friendly display stat, not used in scoring.
     backlog_health = 1.0 / (1.0 + issue_raw)
 
-    # --- Z-scores (matches R exactly: recency_z = scale(-days),issue_z = scale(backlog_health), pop_z = scale(popularity)) ---
-    recency_z = -(days - mean_days) / sd_days
-    issue_z   = (backlog_health - mean_backlog) / sd_backlog
-    pop_z     = (popularity - mean_pop) / sd_pop
+    recency_score_1to5 = score_recency(days)
+    issue_score_1to5   = score_issue_backlog(issue_raw)
+    pop_score_1to5      = score_popularity(total_reach)
 
-    # Mean Z
-    z_mean = np.mean([recency_z, issue_z, pop_z])
-
-    # Winsorize using R's real winsor bounds
-    z_w = np.clip(z_mean, winsor_min, winsor_max)
-
-    # Final 1–5 R scaling
-    final_score = 1 + (z_w - winsor_min) * (4 / (winsor_max - winsor_min))
-    
-    # 1. Winsorize individual Z-values to R bounds
-    recency_w = np.clip(recency_z, winsor_min, winsor_max)
-    issue_w   = np.clip(issue_z,   winsor_min, winsor_max)
-    pop_w     = np.clip(pop_z,     winsor_min, winsor_max)
-
-    # 2. Rescale to 1–5
-    recency_score_1to5 = 1 + (recency_w - winsor_min) * (4 / (winsor_max - winsor_min))
-    issue_score_1to5   = 1 + (issue_w   - winsor_min) * (4 / (winsor_max - winsor_min))
-    pop_score_1to5     = 1 + (pop_w     - winsor_min) * (4 / (winsor_max - winsor_min))
+    final_score = (recency_score_1to5 + issue_score_1to5 + pop_score_1to5) / 3.0
 
     last_commit_date, activity_tag = get_last_commit_date(days)
     issue_tag = get_score_tag(issue_score_1to5, ISSUE_HEALTH_TIERS)
@@ -198,26 +171,19 @@ def get_repo_quality(repo_url, token):
         "days_since_last_commit": days,
         "last_commit_date": last_commit_date.isoformat(),
         "activity_tag": activity_tag,
-        "issue_metric_field": ISSUE_FIELD,
-        "issue_metric_label": ISSUE_FIELD_LABEL,
+        "issue_metric_label": issue_metric_label,
         "issue_metric_raw": issue_raw,
         "issue_tag": issue_tag,
         "backlog_health": backlog_health,
-        "popularity": popularity,
+        "popularity": popularity_log,
         "popularity_tag": popularity_tag,
         "final_score_1to5": final_score,
-        "recency_z": recency_z,
-        "issue_z": issue_z,
-        "pop_z": pop_z,
-        "z_mean": z_mean,
-        "z_winsor": z_w,
         "recency_score_1to5": recency_score_1to5,
         "issue_score_1to5": issue_score_1to5,
-        "pop_score_1to5": pop_score_1to5
+        "pop_score_1to5": pop_score_1to5,
     }
     result_out["driver"] = get_driver_summary(result_out)
     return result_out
-
 
 
 # =====================================================
@@ -229,21 +195,17 @@ def make_radar_chart(result):
     raw_vals = np.array([
         result["days_since_last_commit"],
         result["issue_metric_raw"],
-        result["popularity"]
+        result["popularity"],
     ])
 
-    min_vals = np.array([
-        global_min["days_since_last_commit"],
-        global_min[ISSUE_FIELD],
-        global_min["popularity"]
-    ])
+    min_vals = np.array([0.0, 0.0, 0.0])
     max_vals = np.array([
-        global_max["days_since_last_commit"],
-        global_max[ISSUE_FIELD],
-        global_max["popularity"]
+        float(RECENCY_DAYS_ANCHORS[-1]),
+        float(ISSUE_DAYS_ANCHORS[-1]),
+        float(POPULARITY_LOG10_ANCHORS[-1]),
     ])
 
-    norm_vals = (raw_vals - min_vals) / (max_vals - min_vals + 1e-9)
+    norm_vals = np.clip((raw_vals - min_vals) / (max_vals - min_vals + 1e-9), 0, 1)
 
     inner_offset = 0.15
     shifted_vals = inner_offset + norm_vals * (1 - inner_offset)
@@ -304,6 +266,25 @@ def make_radar_chart(result):
     return encoded
 
 
+def build_badge(score):
+    score_str = f"{score:.2f}"
+    if score >= 4.0:
+        color = "brightgreen"
+    elif score >= 3.0:
+        color = "green"
+    elif score >= 2.0:
+        color = "yellow"
+    else:
+        color = "red"
+
+    badge_url = (
+        f"https://img.shields.io/badge/"
+        f"Repo%20Quality%20Score-{score_str}-{color}"
+        f"?style=plastic"
+    )
+    markdown = f"![Repo Quality]({badge_url})"
+    return badge_url, markdown
+
 
 # =====================================================
 # ROUTES
@@ -314,30 +295,9 @@ def index():
         repo_url = request.form.get("repo_url")
 
         try:
-            # Compute score
             result = get_repo_quality(repo_url, GITHUB_TOKEN)
             chart = make_radar_chart(result)
-
-            # --- NEW: Build badge URL using same logic as /api/badge ---
-            score = result["final_score_1to5"]
-            score_str = f"{score:.2f}"
-
-            if score >= 4.0:
-                color = "brightgreen"
-            elif score >= 3.0:
-                color = "green"
-            elif score >= 2.0:
-                color = "yellow"
-            else:
-                color = "red"
-
-            badge_url = (
-                f"https://img.shields.io/badge/"
-                f"Repo%20Quality%20Score-{score_str}-{color}"
-                f"?style=plastic"
-            )
-
-            markdown = f"![Repo Quality]({badge_url})"
+            badge_url, markdown = build_badge(result["final_score_1to5"])
 
             return render_template(
                 "result.html",
@@ -357,21 +317,14 @@ def index():
                     "popularity_tag": result["popularity_tag"],
 
                     "final_score": round(result["final_score_1to5"], 2),
-                    "recency_z": round(result["recency_z"], 3),
-                    "issue_z": round(result["issue_z"], 3),
-                    "pop_z": round(result["pop_z"], 3),
-                    "z_mean": round(result["z_mean"], 3),
-                    "z_winsor": round(result["z_winsor"], 3),
 
                     "recency_score": round(result["recency_score_1to5"], 2),
                     "issue_score": round(result["issue_score_1to5"], 2),
                     "pop_score": round(result["pop_score_1to5"], 2),
                 },
                 driver=result["driver"],
-
-                # --- NEW VALUES SENT TO TEMPLATE ---
                 badge_url=badge_url,
-                markdown=markdown
+                markdown=markdown,
             )
 
         except Exception as e:
@@ -379,8 +332,6 @@ def index():
             return render_template("index.html", error=str(e))
 
     return render_template("index.html")
-
-
 
 
 @app.route("/api/badge", methods=["GET"])
@@ -391,35 +342,16 @@ def api_badge():
 
     try:
         result = get_repo_quality(repo_url, GITHUB_TOKEN)
-
-        score = result["final_score_1to5"]
-        score_str = f"{score:.2f}"
-
-        if score >= 4.0:
-            color = "brightgreen"
-        elif score >= 3.0:
-            color = "green"
-        elif score >= 2.0:
-            color = "yellow"
-        else:
-            color = "red"
-
-        badge_url = (
-            f"https://img.shields.io/badge/"
-            f"Repo Quality Score-{score_str}-{color}"
-            f"?style=plastic"
-        )
-
-        markdown = f"![Repo Quality]({badge_url})"
+        badge_url, markdown = build_badge(result["final_score_1to5"])
 
         return jsonify({
             "repo": result["repo"],
-            "score": score,
+            "score": result["final_score_1to5"],
             "badge_url": badge_url,
             "markdown": markdown,
             "last_commit_date": result["last_commit_date"],
             "activity_tag": result["activity_tag"],
-            "driver": result["driver"]
+            "driver": result["driver"],
         })
 
     except Exception as e:
@@ -427,13 +359,12 @@ def api_badge():
         return jsonify({"error": str(e)}), 500
 
 
-
 # =====================================================
 # MAIN
 # =====================================================
 if __name__ == "__main__":
     app.run(
-        host="0.0.0.0",   
-        port= 8030,        
+        host="0.0.0.0",
+        port=8030,
         debug=True
     )
