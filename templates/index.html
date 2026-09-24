@@ -4,6 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>GitHub Repo Quality Rater</title>
+<link rel="preconnect" href="https://use.typekit.net">
+<link rel="preconnect" href="https://p.typekit.net" crossorigin>
+<link rel="stylesheet" href="https://use.typekit.net/mae4nta.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Montserrat:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
   :root {
     --az-red: #AB0520;
@@ -13,11 +19,19 @@
     --az-azurite: #1E5288;
     --az-warmgray: #F4EDE5;
     --az-coolgray: #E2E9EB;
+    /* Proxima Nova is a licensed commercial font (not on Google Fonts).
+       Listed first so it's used automatically if it's installed on the
+       serving machine or added via an Adobe Fonts/Typekit kit; Montserrat
+       is the free fallback in the meantime. */
+    --font-sans: "proxima-nova", 'Montserrat', -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --font-serif: "garamond-premier-pro", 'EB Garamond', 'Times New Roman', serif;
   }
   * { box-sizing: border-box; }
   body {
     margin: 0;
-    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-family: var(--font-sans);
+    font-weight: 400;
+    font-style: normal;
     background: var(--az-warmgray);
     color: var(--az-blue);
     display: flex;
@@ -32,22 +46,47 @@
     align-items: center;
     justify-content: space-between;
     gap: 16px;
+    font-family: var(--font-sans);
+    font-weight: 400;
+    font-style: normal;
   }
   header img { height: 44px; display: block; }
-  header h1 { font-size: 1.3rem; margin: 0; font-weight: 600; }
+  header h1 { font-size: 1.5rem; margin: 0; font-weight: 600; }
+  .read-paper-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 18px;
+    background: var(--az-red);
+    color: #fff;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    text-decoration: none;
+    white-space: nowrap;
+    transition: background .15s;
+  }
+  .read-paper-btn:hover { background: var(--az-red-dark); color: #fff; }
+  .read-paper-btn svg { width: 16px; height: 16px; fill: currentColor; flex-shrink: 0; }
   main {
     flex: 1;
     display: flex;
     justify-content: center;
     align-items: flex-start;
-    padding: 60px 20px;
+    padding: 60px 20px 140px;
+  }
+  .container {
+    max-width: 640px;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
   }
   .card {
     background: #fff;
     border-radius: 12px;
     box-shadow: 0 2px 10px rgba(12, 35, 75, 0.08);
     padding: 40px;
-    max-width: 560px;
     width: 100%;
   }
   .card h2 { margin: 0 0 10px; color: var(--az-red); font-size: 1.15rem; }
@@ -132,45 +171,276 @@
     align-items: center;
     flex-wrap: wrap;
     gap: 12px;
-    font-size: 0.85rem;
+    font-size: 0.9rem;
+    font-family: var(--font-sans);
+    font-weight: 400;
+    font-style: normal;
+    position: fixed;
+    left: 0;
+    bottom: 0;
+    width: 100%;
+    z-index: 100;
+    box-shadow: 0 -2px 10px rgba(12, 35, 75, 0.15);
   }
   footer a { color: #fff; text-decoration: none; }
   footer a:hover { text-decoration: underline; }
   .footer-left { font-weight: 600; }
   .footer-links a { margin-left: 22px; }
+
+  .history-card h2 {
+    margin: 0 0 18px;
+    color: var(--az-red);
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-weight: 600;
+  }
+  .history-table-wrap { overflow-x: auto; }
+  .history-table { width: 100%; border-collapse: collapse; min-width: 460px; }
+  .history-table th {
+    text-align: left;
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #999;
+    font-weight: 600;
+    padding: 0 10px 10px 0;
+  }
+  .history-table td {
+    padding: 12px 10px 12px 0;
+    border-top: 1px solid var(--az-coolgray);
+    vertical-align: middle;
+    font-size: 0.9rem;
+  }
+  .history-repo a {
+    color: var(--az-blue);
+    font-weight: 600;
+    text-decoration: none;
+  }
+  .history-repo a:hover { color: var(--az-azurite); text-decoration: underline; }
+  .history-rating {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-weight: 600;
+    color: var(--az-blue);
+    white-space: nowrap;
+  }
+  .history-rating .star { color: #E8A33D; font-size: 0.95em; }
+  .history-final-wrap { display: flex; align-items: center; gap: 10px; }
+  .view-report-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: var(--az-red);
+    color: #fff;
+    text-decoration: none;
+    font-weight: 700;
+    font-size: 1rem;
+    line-height: 1;
+    flex-shrink: 0;
+    transition: background .15s, transform .15s;
+  }
+  .view-report-btn:hover { background: var(--az-red-dark); color: #fff; transform: translateX(2px); }
+  .history-final {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+    min-width: 90px;
+  }
+  .history-final .final-score-num { font-weight: 600; color: var(--az-red); font-size: 1.1rem; white-space: nowrap; }
+  .history-final .mini-heat-track { width: 100%; }
+  .mini-heat-track {
+    position: relative;
+    height: 8px;
+    min-width: 70px;
+    border-radius: 999px;
+    background: linear-gradient(to right, #AB0520 0%, #E8A33D 50%, #1c7a34 100%);
+    box-shadow: inset 0 1px 2px rgba(12, 35, 75, 0.2);
+  }
+  .mini-heat-marker {
+    position: absolute;
+    top: -3px;
+    width: 3px;
+    height: 14px;
+    background: var(--az-blue);
+    border-radius: 2px;
+    transform: translateX(-50%);
+    box-shadow: 0 0 0 1.5px #fff, 0 1px 3px rgba(0,0,0,0.3);
+  }
+
+  .how-it-works {
+    margin-top: 26px;
+    border-top: 1px solid var(--az-coolgray);
+    padding-top: 18px;
+  }
+  .how-it-works summary {
+    cursor: pointer;
+    font-weight: 600;
+    color: var(--az-red);
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .how-it-works summary::-webkit-details-marker { display: none; }
+  .how-it-works summary::marker { content: ""; }
+  .how-it-works summary::before {
+    content: "\25B8";
+    display: inline-block;
+    color: var(--az-red);
+    transition: transform .15s;
+  }
+  .how-it-works[open] summary::before { transform: rotate(90deg); }
+  .how-it-works-body {
+    margin-top: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .how-block h3 {
+    margin: 0 0 4px;
+    font-size: 0.95rem;
+    color: var(--az-blue);
+    font-weight: 600;
+  }
+  .how-block p { margin: 0; color: #555; font-size: 0.88rem; line-height: 1.6; }
 </style>
 </head>
 <body>
 
 <header>
     <h1>Repository Quality Indicator for Github Software Projects</h1>
+    <a class="read-paper-btn" href="https://paper-link.example.com" target="_blank" rel="noopener">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>
+        Read the Paper
+    </a>
 </header>
 
 <main>
-  <div class="card">
-    <h2>Check a repository's quality score</h2>
-    <p class="lede">
-        Pulls GitHub activity, issue-response health, and popularity for a repo,
-        benchmarks them against roughly 13,000 maintained repositories, and
-        returns a single 1&ndash;5 quality score with a full breakdown.
-    </p>
+  <div class="container">
+    <div class="card">
+        <h2>Check a repository's quality score</h2>
+        <p class="lede">
+            Pulls GitHub activity, issue-response health, and popularity for a repo,
+            scores each against fixed quality anchors and returns a single 0&ndash;5 rating with a full breakdown.
+        </p>
 
-    <form method="post">
-        <input type="text" name="repo_url" placeholder="https://github.com/owner/repo" required autofocus>
-        <button type="submit">Analyze</button>
-    </form>
-    <p class="hint">Example: https://github.com/pandas-dev/pandas</p>
+        <form method="post">
+            <input type="text" name="repo_url" placeholder="https://github.com/owner/repo" required autofocus value="{{ 'https://github.com/' ~ auto_repo if auto_repo else '' }}">
+            <button type="submit">Analyze</button>
+        </form>
+        <p class="hint">Example: https://github.com/pandas-dev/pandas</p>
 
-    {% if error %}
-    <div class="error">{{ error }}</div>
+        {% if error %}
+        <div class="error">{{ error }}</div>
+        {% endif %}
+    </div>
+
+    {% if history %}
+    <div class="card history-card">
+        <h2>Last {{ history|length }} repos rated</h2>
+        <div class="history-table-wrap">
+            <table class="history-table">
+                <thead>
+                    <tr>
+                        <th>Repo</th>
+                        <th>Recency</th>
+                        <th>Issues</th>
+                        <th>Popularity</th>
+                        <th>Final</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for entry in history %}
+                    <tr>
+                        <td class="history-repo">
+                            <a href="https://github.com/{{ entry.repo }}" target="_blank" rel="noopener">{{ entry.repo }}</a>
+                        </td>
+                        <td>
+                            <span class="history-rating"><span class="star">&#9733;</span>{{ entry.recency_score }}</span>
+                        </td>
+                        <td>
+                            <span class="history-rating"><span class="star">&#9733;</span>{{ entry.issue_score }}</span>
+                        </td>
+                        <td>
+                            <span class="history-rating"><span class="star">&#9733;</span>{{ entry.pop_score }}</span>
+                        </td>
+                        <td>
+                            <div class="history-final-wrap">
+                                <div class="history-final">
+                                    <span class="final-score-num">{{ entry.final_score }}</span>
+                                    <div class="mini-heat-track" title="Score: {{ entry.final_score }} / 5">
+                                        <div class="mini-heat-marker" style="left: {{ (entry.final_score / 5 * 100) }}%;"></div>
+                                    </div>
+                                </div>
+                                <a class="view-report-btn" href="/?repo={{ entry.repo | urlencode }}" title="View full report" aria-label="View full report for {{ entry.repo }}">&rarr;</a>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <details class="how-it-works">
+            <summary>How we calculate each dimension</summary>
+            <div class="how-it-works-body">
+                <div class="how-block">
+                    <h3>Recency</h3>
+                    <p>
+                        We pull the timestamp of the most recent commit on the default branch from
+                        GitHub's GraphQL API and count the days since then. That count is mapped onto
+                        a 0&ndash;5 scale against fixed anchors: a commit today scores 5.0, easing down
+                        through 14, 30, 60, 90, and 180 days to 1.3 at a year and 0.0 at two years of
+                        inactivity. Repos with no commit data available default to the two-year
+                        (worst-case) anchor.
+                    </p>
+                </div>
+                <div class="how-block">
+                    <h3>Issues</h3>
+                    <p>
+                        We pull every issue (open and closed) via GitHub's REST API and calculate how
+                        long each closed issue stayed open, using the median across the repo when
+                        there's enough data (falling back to the average). That day count is scored
+                        the same way as recency. Same-day closes score 5.0, easing down through
+                        7, 14, 30, 60, and 120 days to 1.0 at a year. Repos with no closed-issue
+                        history default to the worst-case anchor.
+                    </p>
+                </div>
+                <div class="how-block">
+                    <h3>Popularity</h3>
+                    <p>
+                        We add up stars, forks, and watchers, then take log&#8321;&#8320; of the total
+                        so each additional order of magnitude (10 &rarr; 100 &rarr; 1,000 &rarr;
+                        10,000+) is worth one point.
+                    </p>
+                </div>
+                <div class="how-block">
+                    <h3>Final rating</h3>
+                    <p>
+                        The three 0&ndash;5 scores are averaged in equal thirds for the final rating
+                        shown everywhere on this site. 
+                    </p>
+                </div>
+            </div>
+        </details>
+    </div>
     {% endif %}
   </div>
 </main>
 
-<div id="loadingOverlay" class="loading-overlay">
+<div id="loadingOverlay" class="loading-overlay{% if auto_repo %} active{% endif %}">
     <div class="spinner"></div>
     <p class="loading-text">Analyzing repository&hellip;</p>
-    <p class="loading-sub">Pulling GitHub metrics and comparing them against the benchmark dataset. This usually takes a few seconds.</p>
+    <p class="loading-sub">Pulling GitHub metrics and scoring them against the anchor rating system. This usually takes a few seconds.</p>
 </div>
 
 <footer>
@@ -193,6 +463,19 @@
         submitBtn.disabled = true;
         submitBtn.textContent = "Analyzing…";
     });
+
+    {% if auto_repo %}
+    // Arrived via a shared link — the loading overlay is already showing
+    // (rendered active server-side), so auto-run the analysis instead of
+    // making the user click Analyze again.
+    submitBtn.disabled = true;
+    submitBtn.textContent = "Analyzing…";
+    if (form.requestSubmit) {
+        form.requestSubmit();
+    } else {
+        form.submit();
+    }
+    {% endif %}
 })();
 </script>
 

@@ -2,11 +2,12 @@
 
 import os
 import io
+import json
 import base64
 import logging
 import traceback
-from datetime import date, timedelta
-from flask import Flask, render_template, request, jsonify
+from datetime import date, datetime, timezone, timedelta
+from flask import Flask, render_template, request, jsonify, url_for
 import matplotlib
 matplotlib.use("Agg")
 
@@ -21,6 +22,77 @@ GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")   # SAFER — set externally
 app = Flask(__name__)
 
 logging.basicConfig(level=logging.DEBUG)
+
+
+class RepoNotEligibleError(Exception):
+    """Raised when a repo exists and was reachable, but shouldn't be scored
+    (private or archived) — only public, active repos are supported."""
+    pass
+
+
+# =====================================================
+# LOCAL RATING HISTORY (public repos only — private/archived
+# repos never reach save_to_history, since get_repo_quality
+# raises before returning for those)
+# =====================================================
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+HISTORY_FILE = os.path.join(BASE_DIR, "rated_repos.json")
+HISTORY_MAX_ENTRIES = 50   # how many ratings to keep on disk
+HISTORY_DISPLAY_COUNT = 5  # how many to show on the index page
+
+
+def load_history():
+    try:
+        with open(HISTORY_FILE, "r") as f:
+            data = json.load(f)
+            return data if isinstance(data, list) else []
+    except (FileNotFoundError, json.JSONDecodeError):
+        return []
+
+
+def save_to_history(result):
+    """Append a completed, public-repo rating to the local JSON history file."""
+    entry = {
+        "repo": result["repo"],
+        "rated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "recency_score": round(result["recency_score_1to5"], 2),
+        "issue_score": round(result["issue_score_1to5"], 2),
+        "pop_score": round(result["pop_score_1to5"], 2),
+        "final_score": round(result["final_score_1to5"], 2),
+        "activity_tag": result["activity_tag"],
+        "issue_tag": result["issue_tag"],
+        "popularity_tag": result["popularity_tag"],
+    }
+
+    history = load_history()
+    history.append(entry)
+    history = history[-HISTORY_MAX_ENTRIES:]
+
+    try:
+        with open(HISTORY_FILE, "w") as f:
+            json.dump(history, f, indent=2)
+    except OSError as e:
+        app.logger.error("Failed to write history file: %s", e)
+
+    return entry
+
+
+def get_recent_history(n=HISTORY_DISPLAY_COUNT):
+    """Return the n most recently rated *distinct* repos, newest first.
+    The underlying JSON file still logs every run (so re-rating a repo
+    isn't lost), but if a repo was rated more than once, only its most
+    recent rating is shown here, so repeats don't crowd out other repos."""
+    seen = set()
+    deduped = []
+    for entry in reversed(load_history()):
+        repo = entry["repo"]
+        if repo in seen:
+            continue
+        seen.add(repo)
+        deduped.append(entry)
+        if len(deduped) >= n:
+            break
+    return deduped
 
 
 # =====================================================
@@ -43,6 +115,44 @@ POPULARITY_SCORE_ANCHORS = [1.0, 2.0, 3.0, 4.0, 5.0]
 
 DAYS_IF_MISSING = RECENCY_DAYS_ANCHORS[-1]
 ISSUE_DAYS_IF_MISSING = ISSUE_DAYS_ANCHORS[-1]
+
+
+LANG_COLORS = [
+    "#AB0520", "#1E5288", "#378DBD", "#E8A33D", "#1c7a34",
+    "#6B4FA0", "#C2554D", "#4A7C59", "#8A8D91", "#D4A017",
+]
+
+
+def parse_languages(languages_str):
+    """Parse the 'Name(size), Name2(size2)' string scan_repo returns into a
+    list of {name, bytes, pct} dicts, sorted largest-first, with a color
+    assigned from LANG_COLORS."""
+    if not languages_str:
+        return []
+
+    langs = []
+    for part in languages_str.split(","):
+        part = part.strip()
+        if not part or "(" not in part:
+            continue
+        name, _, rest = part.partition("(")
+        size_str = rest.rstrip(")")
+        try:
+            size = int(size_str)
+        except ValueError:
+            continue
+        langs.append({"name": name.strip(), "bytes": size})
+
+    total = sum(l["bytes"] for l in langs)
+    if total <= 0:
+        return []
+
+    langs.sort(key=lambda l: l["bytes"], reverse=True)
+    for i, l in enumerate(langs):
+        l["pct"] = round(100 * l["bytes"] / total, 1)
+        l["color"] = LANG_COLORS[i % len(LANG_COLORS)]
+
+    return langs
 
 
 def _to_float_or_none(v):
@@ -132,6 +242,35 @@ def get_repo_quality(repo_url, token):
     if not result:
         raise RuntimeError("Scan failed")
 
+    # GitHub's GraphQL API returns `repository: null` both when a repo
+    # truly doesn't exist AND when it exists but the token can't see it
+    # (e.g. a private repo it has no access to) — there's no way to tell
+    # those apart from the response, so scan_repo surfaces both as this
+    # same "error" string. Left unchecked, every other field on `result`
+    # stays at its default ("" / 0), so the app would otherwise silently
+    # score a private/nonexistent repo using bogus all-zero data instead
+    # of failing. Catch it here, before anything downstream trusts those
+    # fields.
+    if result.get("error"):
+        err = str(result["error"])
+        err_lower = err.lower()
+        not_found_signals = ("not found", "inaccessible", "could not resolve")
+        if any(signal in err_lower for signal in not_found_signals):
+            raise RepoNotEligibleError(
+                f"'{repo_full}' couldn't be accessed — it's either private or doesn't exist. "
+                f"Only public repositories can be analyzed."
+            )
+        raise RuntimeError(err)
+
+    if result.get("is_private"):
+        raise RepoNotEligibleError(
+            f"'{repo_full}' is a private repository. Only public repositories can be analyzed."
+        )
+    if result.get("is_archived"):
+        raise RepoNotEligibleError(
+            f"'{repo_full}' is archived. Only actively maintained public repositories can be analyzed."
+        )
+
     stars = _to_float_or_none(result.get("stars")) or 0.0
     forks = _to_float_or_none(result.get("forks")) or 0.0
     watchers = _to_float_or_none(result.get("watchers")) or 0.0
@@ -181,6 +320,9 @@ def get_repo_quality(repo_url, token):
         "recency_score_1to5": recency_score_1to5,
         "issue_score_1to5": issue_score_1to5,
         "pop_score_1to5": pop_score_1to5,
+        "languages": parse_languages(result.get("languages", "")),
+        "topics": [t.strip() for t in result.get("topics", "").split(",") if t.strip()],
+        "about": (result.get("about") or "").strip(),
     }
     result_out["driver"] = get_driver_summary(result_out)
     return result_out
@@ -294,44 +436,62 @@ def index():
     if request.method == "POST":
         repo_url = request.form.get("repo_url")
 
-        try:
-            result = get_repo_quality(repo_url, GITHUB_TOKEN)
-            chart = make_radar_chart(result)
-            badge_url, markdown = build_badge(result["final_score_1to5"])
+        if repo_url:
+            try:
+                result = get_repo_quality(repo_url, GITHUB_TOKEN)
+                chart = make_radar_chart(result)
+                badge_url, markdown = build_badge(result["final_score_1to5"])
+                save_to_history(result)
 
-            return render_template(
-                "result.html",
-                result=result,
-                chart_data=chart,
-                breakdown={
-                    "days_raw": result["days_since_last_commit"],
-                    "last_commit_date": result["last_commit_date"],
-                    "activity_tag": result["activity_tag"],
+                # Flask/Werkzeug URL-encodes the repo query value automatically.
+                share_url = url_for("index", repo=result["repo"], _external=True)
 
-                    "issue_label": result["issue_metric_label"],
-                    "issues_raw": round(result["issue_metric_raw"], 2),
-                    "backlog_health": round(result["backlog_health"], 3),
-                    "issue_tag": result["issue_tag"],
+                return render_template(
+                    "result.html",
+                    result=result,
+                    chart_data=chart,
+                    breakdown={
+                        "days_raw": result["days_since_last_commit"],
+                        "last_commit_date": result["last_commit_date"],
+                        "activity_tag": result["activity_tag"],
 
-                    "popularity_raw": round(result["popularity"], 2),
-                    "popularity_tag": result["popularity_tag"],
+                        "issue_label": result["issue_metric_label"],
+                        "issues_raw": round(result["issue_metric_raw"], 2),
+                        "backlog_health": round(result["backlog_health"], 3),
+                        "issue_tag": result["issue_tag"],
 
-                    "final_score": round(result["final_score_1to5"], 2),
+                        "popularity_raw": round(result["popularity"], 2),
+                        "popularity_tag": result["popularity_tag"],
 
-                    "recency_score": round(result["recency_score_1to5"], 2),
-                    "issue_score": round(result["issue_score_1to5"], 2),
-                    "pop_score": round(result["pop_score_1to5"], 2),
-                },
-                driver=result["driver"],
-                badge_url=badge_url,
-                markdown=markdown,
-            )
+                        "final_score": round(result["final_score_1to5"], 2),
 
-        except Exception as e:
-            app.logger.error("Error in / (index) route:\n%s", traceback.format_exc())
-            return render_template("index.html", error=str(e))
+                        "recency_score": round(result["recency_score_1to5"], 2),
+                        "issue_score": round(result["issue_score_1to5"], 2),
+                        "pop_score": round(result["pop_score_1to5"], 2),
+                    },
+                    driver=result["driver"],
+                    badge_url=badge_url,
+                    markdown=markdown,
+                    languages=result["languages"],
+                    topics=result["topics"],
+                    about=result["about"],
+                    share_url=share_url,
+                )
 
-    return render_template("index.html")
+            except Exception as e:
+                app.logger.error("Error in / (index) route:\n%s", traceback.format_exc())
+                return render_template("index.html", error=str(e), history=get_recent_history())
+
+        return render_template("index.html", history=get_recent_history())
+
+    # GET. A shareable link like /?repo=owner%2Fname lands here. Rather than
+    # running the (potentially multi-second) GitHub scan synchronously and
+    # leaving the browser on a blank page while it waits, render the index
+    # page immediately with the repo pre-filled and the loading overlay
+    # already showing, then auto-submit the form — the existing POST branch
+    # above (with its normal loading UX) does the actual analysis.
+    auto_repo = request.args.get("repo")
+    return render_template("index.html", history=get_recent_history(), auto_repo=auto_repo)
 
 
 @app.route("/api/badge", methods=["GET"])
@@ -343,6 +503,7 @@ def api_badge():
     try:
         result = get_repo_quality(repo_url, GITHUB_TOKEN)
         badge_url, markdown = build_badge(result["final_score_1to5"])
+        save_to_history(result)
 
         return jsonify({
             "repo": result["repo"],

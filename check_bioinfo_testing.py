@@ -45,7 +45,8 @@ MAX_RETRIES = 5
 BACKOFF_BASE = 1.5
 
 CSV_FIELDS = [
-    "repo", "is_archived", "is_fork", "created_at", "pushed_at",
+    "repo", "is_private", "is_archived", "is_fork", "created_at", "pushed_at",
+    "about",
     "repo_age_days", "days_since_last_commit",
     "commit_count", "bug_commits",
     "total_issues", "open_issues", "closed_issues",
@@ -58,6 +59,21 @@ CSV_FIELDS = [
     "stars", "forks", "watchers",
     "error"
 ]
+
+
+# ------------------------
+# GRAPHQL ERROR CLEANUP
+# ------------------------
+def _clean_graphql_error(errors):
+    """GitHub's GraphQL errors come back as a list of dicts, e.g.
+    [{'type': 'NOT_FOUND', 'path': ['repository'],
+      'message': "Could not resolve to a Repository with the name '...'."}]
+    Stringifying that whole structure makes for an ugly, unreadable error
+    message. This pulls out just the human-readable 'message' text(s)."""
+    if not errors:
+        return "GraphQL request failed"
+    messages = [e.get("message", e.get("type", "Unknown error")) for e in errors]
+    return " ".join(messages)
 
 
 # ------------------------
@@ -112,7 +128,7 @@ def scan_repo(token, repo_full_name):
 
         data = gql_resp.json()
         if "errors" in data:
-            result["error"] = str(data["errors"])
+            result["error"] = _clean_graphql_error(data["errors"])
             return result
 
         repo_data = data.get("data", {}).get("repository")
@@ -122,9 +138,11 @@ def scan_repo(token, repo_full_name):
 
         # Basic metadata
         result["is_archived"] = repo_data.get("isArchived", False)
+        result["is_private"] = repo_data.get("isPrivate", False)
         result["is_fork"] = repo_data.get("isFork", False)
         result["created_at"] = repo_data.get("createdAt", "")
         result["pushed_at"] = repo_data.get("pushedAt", "")
+        result["about"] = repo_data.get("description") or ""
         if result["created_at"]:
             created = datetime.fromisoformat(result["created_at"].replace("Z", "+00:00"))
             result["repo_age_days"] = (datetime.now(timezone.utc) - created).days
@@ -290,6 +308,7 @@ query($owner:String!, $name:String!) {
     isFork
     createdAt
     pushedAt
+    description
     stargazerCount
     forkCount
     watchers { totalCount }

@@ -4,6 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Repo Quality Result — {{ result.repo }}</title>
+<link rel="preconnect" href="https://use.typekit.net">
+<link rel="preconnect" href="https://p.typekit.net" crossorigin>
+<link rel="stylesheet" href="https://use.typekit.net/mae4nta.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Montserrat:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
   :root {
     --az-red: #AB0520;
@@ -13,11 +19,19 @@
     --az-azurite: #1E5288;
     --az-warmgray: #F4EDE5;
     --az-coolgray: #E2E9EB;
+    /* Proxima Nova is a licensed commercial font (not on Google Fonts).
+       Listed first so it's used automatically if it's installed on the
+       serving machine or added via an Adobe Fonts/Typekit kit; Montserrat
+       is the free fallback in the meantime. */
+    --font-sans: "proxima-nova", 'Montserrat', -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --font-serif: "garamond-premier-pro", 'EB Garamond', 'Times New Roman', serif;
   }
   * { box-sizing: border-box; }
   body {
     margin: 0;
-    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-family: var(--font-sans);
+    font-weight: 400;
+    font-style: normal;
     background: var(--az-warmgray);
     color: var(--az-blue);
     display: flex;
@@ -32,10 +46,29 @@
     align-items: center;
     justify-content: space-between;
     gap: 16px;
+    font-family: var(--font-sans);
+    font-weight: 400;
+    font-style: normal;
   }
   header img { height: 44px; display: block; }
-  header h1 { font-size: 1.3rem; margin: 0; font-weight: 600; }
-  main { flex: 1; padding: 40px 20px; display: flex; justify-content: center; }
+  header h1 { font-size: 1.5rem; margin: 0; font-weight: 600; }
+  .read-paper-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 18px;
+    background: var(--az-red);
+    color: #fff;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    text-decoration: none;
+    white-space: nowrap;
+    transition: background .15s;
+  }
+  .read-paper-btn:hover { background: var(--az-red-dark); color: #fff; }
+  .read-paper-btn svg { width: 16px; height: 16px; fill: currentColor; flex-shrink: 0; }
+  main { flex: 1; padding: 40px 20px 140px; display: flex; justify-content: center; }
   .container { max-width: 720px; width: 100%; display: flex; flex-direction: column; gap: 20px; }
   .card {
     background: #fff;
@@ -49,24 +82,94 @@
     text-transform: uppercase;
     letter-spacing: 0.05em;
     color: var(--az-red);
-    font-weight: 700;
+    font-weight: 600;
   }
-  .score-hero { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px; }
-  .score-hero .repo-name { font-size: 1.3rem; font-weight: 700; word-break: break-word; }
-  .score-hero .score-value { font-size: 2.4rem; font-weight: 700; color: var(--az-red); text-align: right; }
+  .score-hero { position: relative; display: flex; align-items: center; flex-wrap: wrap; gap: 16px; }
+  .share-button {
+    position: absolute;
+    top: -14px;
+    left: -14px;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: var(--az-blue);
+    color: #fff;
+    border: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    box-shadow: 0 2px 8px rgba(12, 35, 75, 0.3);
+    transition: background .15s, transform .15s;
+    padding: 0;
+  }
+  .share-button:hover { background: var(--az-azurite); transform: scale(1.06); }
+  .share-button svg { width: 18px; height: 18px; fill: currentColor; }
+  .score-hero .score-block { display: flex; flex-direction: column; align-items: flex-start; }
+  .score-hero .score-value { font-size: 2.4rem; font-weight: 600; color: var(--az-red); text-align: left; line-height: 1; }
   .score-hero .score-value span { font-size: 1.1rem; color: #777; font-weight: 400; }
+  .score-hero .repo-info { flex: 1 1 220px; min-width: 200px; }
+  .score-hero .repo-name { font-size: 1.3rem; font-weight: 600; word-break: break-word; }
+  .score-hero .repo-name a { color: inherit; text-decoration: none; }
+  .score-hero .repo-name a:hover { color: var(--az-azurite); text-decoration: underline; }
   .tag-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+  .heat-bar-wrap { flex-basis: 100%; width: 100%; margin-top: 6px; }
+  .heat-bar-track {
+    position: relative;
+    height: 14px;
+    border-radius: 999px;
+    background: linear-gradient(to right, #AB0520 0%, #E8A33D 50%, #1c7a34 100%);
+    box-shadow: inset 0 1px 3px rgba(12, 35, 75, 0.25);
+  }
+  .heat-bar-marker {
+    position: absolute;
+    top: -6px;
+    width: 5px;
+    height: 26px;
+    background: var(--az-blue);
+    border-radius: 3px;
+    transform: translateX(-50%);
+    box-shadow: 0 0 0 2px #fff, 0 1px 4px rgba(0,0,0,0.35);
+  }
+  .heat-bar-labels {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.72rem;
+    color: #888;
+    margin-top: 6px;
+    padding: 0 1px;
+  }
   .tag {
     display: inline-block;
     padding: 3px 10px;
     border-radius: 999px;
     font-size: 0.75rem;
-    font-weight: 700;
+    font-weight: 600;
     background: var(--az-coolgray);
     color: var(--az-blue);
   }
   .tag.active { background: #e3f3e6; color: #1c7a34; }
   .tag.stale { background: #fdecec; color: var(--az-red); }
+  .tag-row.secondary-tags { margin-top: 8px; }
+  .tag.lang-tag { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; background: var(--az-warmgray); color: var(--az-blue); border: 1px solid var(--az-coolgray); }
+  .lang-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .lang-sep { color: #bbb; margin: 0 1px; }
+  .lang-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .tag.topic-tag { background: var(--az-warmgray); color: var(--az-azurite); border: 1px solid var(--az-coolgray); font-weight: 600; }
+  .about-block {
+    flex: 1 1 220px;
+    min-width: 180px;
+    padding-left: 18px;
+    border-left: 1px solid var(--az-coolgray);
+    color: #666;
+    font-size: 0.88rem;
+    font-style: italic;
+    line-height: 1.5;
+    align-self: stretch;
+    display: flex;
+    align-items: center;
+  }
+  .about-block p { margin: 0; }
   .driver-box {
     background: var(--az-warmgray);
     border-left: 4px solid var(--az-oasis);
@@ -75,18 +178,48 @@
   }
   .driver-box p { margin: 0 0 6px; }
   .driver-box .meta { font-size: 0.85rem; color: #555; margin: 0; }
-  ul.breakdown { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 10px; }
+  ul.breakdown { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 12px; }
   ul.breakdown li {
-    display: flex;
-    justify-content: space-between;
-    gap: 12px;
+    display: grid;
+    grid-template-columns: 56px 1fr 54px 110px;
+    align-items: center;
+    gap: 14px;
     border-bottom: 1px solid var(--az-coolgray);
-    padding-bottom: 10px;
+    padding-bottom: 12px;
     font-size: 0.95rem;
   }
-  ul.breakdown li:last-child { border-bottom: none; padding-top: 2px; font-weight: 700; }
+  ul.breakdown li:last-child { border-bottom: none; padding-top: 2px; font-weight: 600; }
+  ul.breakdown .metric-raw { font-weight: 600; color: var(--az-blue); text-align: left; }
+  ul.breakdown li:last-child .metric-raw { color: var(--az-red); }
   ul.breakdown .metric-name { color: #555; }
   ul.breakdown li:last-child .metric-name { color: var(--az-blue); }
+  .metric-rating {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 3px;
+    font-weight: 600;
+    color: var(--az-blue);
+    white-space: nowrap;
+  }
+  .metric-rating .star { color: #E8A33D; font-size: 0.95em; }
+  .mini-heat-track {
+    position: relative;
+    height: 8px;
+    border-radius: 999px;
+    background: linear-gradient(to right, #AB0520 0%, #E8A33D 50%, #1c7a34 100%);
+    box-shadow: inset 0 1px 2px rgba(12, 35, 75, 0.2);
+  }
+  .mini-heat-marker {
+    position: absolute;
+    top: -3px;
+    width: 3px;
+    height: 14px;
+    background: var(--az-blue);
+    border-radius: 2px;
+    transform: translateX(-50%);
+    box-shadow: 0 0 0 1.5px #fff, 0 1px 3px rgba(0,0,0,0.3);
+  }
   .chart-wrap { text-align: center; }
   .chart-wrap img { max-width: 100%; height: auto; border-radius: 8px; }
   .badge-block {
@@ -134,7 +267,16 @@
     align-items: center;
     flex-wrap: wrap;
     gap: 12px;
-    font-size: 0.85rem;
+    font-size: 0.9rem;
+    font-family: var(--font-sans);
+    font-weight: 400;
+    font-style: normal;
+    position: fixed;
+    left: 0;
+    bottom: 0;
+    width: 100%;
+    z-index: 100;
+    box-shadow: 0 -2px 10px rgba(12, 35, 75, 0.15);
   }
   footer a { color: #fff; text-decoration: none; }
   footer a:hover { text-decoration: underline; }
@@ -146,30 +288,57 @@
 
 <header>
     <h1>Repository Quality Indicator for Github Software Projects</h1>
-
+    <a class="read-paper-btn" href="https://paper-link.example.com" target="_blank" rel="noopener">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>
+        Read the Paper
+    </a>
 </header>
 
 <main>
 <div class="container">
 
   <div class="card score-hero">
-    <div>
-        <div class="repo-name">{{ result.repo }}</div>
+    <button class="share-button" onclick="shareResults()" title="Share this result" aria-label="Share this result">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92 1.61 0 2.92-1.31 2.92-2.92s-1.31-2.92-2.92-2.92z"/></svg>
+    </button>
+    <div class="score-block">
+        <div class="score-value">{{ breakdown.final_score }}<span> / 5</span></div>
+    </div>
+    <div class="repo-info">
+        <div class="repo-name">
+            <a href="https://github.com/{{ result.repo }}" target="_blank" rel="noopener">{{ result.repo }}</a>
+        </div>
         <div class="tag-row">
             <span class="tag {% if breakdown.activity_tag == 'Active' %}active{% elif breakdown.activity_tag == 'Stale' %}stale{% endif %}">{{ breakdown.activity_tag }}</span>
             <span class="tag {% if breakdown.issue_tag == 'Responsive' %}active{% elif breakdown.issue_tag == 'Backlogged' %}stale{% endif %}">{{ breakdown.issue_tag }}</span>
             <span class="tag {% if breakdown.popularity_tag == 'Popular' %}active{% elif breakdown.popularity_tag == 'Niche' %}stale{% endif %}">{{ breakdown.popularity_tag }}</span>
         </div>
+        {% if languages or topics %}
+        <div class="tag-row secondary-tags">
+            {% if languages %}
+            <span class="tag lang-tag">
+                {% for lang in languages[:3] %}<span class="lang-dot" style="background: {{ lang.color }};"></span>{{ lang.name }}{% if not loop.last %}<span class="lang-sep">&middot;</span>{% endif %}{% endfor %}
+            </span>
+            {% endif %}
+            {% for topic in topics[:5] %}
+            <span class="tag topic-tag">{{ topic }}</span>
+            {% endfor %}
+        </div>
+        {% endif %}
     </div>
-    <div class="score-value">{{ breakdown.final_score }}<span> / 5</span></div>
-  </div>
-
-  <div class="card">
-    <h2>Recency</h2>
-    <p style="margin:0;">
-        Estimated last commit: <strong>{{ breakdown.last_commit_date }}</strong>
-        ({{ breakdown.days_raw }} days ago)
-    </p>
+    {% if about %}
+    <div class="about-block">
+        <p>{{ about }}</p>
+    </div>
+    {% endif %}
+    <div class="heat-bar-wrap">
+        <div class="heat-bar-track">
+            <div class="heat-bar-marker" style="left: {{ (breakdown.final_score / 5 * 100) }}%;"></div>
+        </div>
+        <div class="heat-bar-labels">
+            <span>0</span><span>1</span><span>2</span><span>3</span><span>4</span><span>5</span>
+        </div>
+    </div>
   </div>
 
   <div class="card">
@@ -188,20 +357,36 @@
     <h2>Score breakdown</h2>
     <ul class="breakdown">
         <li>
+            <span class="metric-raw">{{ breakdown.days_raw | round | int }}</span>
             <span class="metric-name">Days since last commit</span>
-            <span>{{ breakdown.days_raw }} &rarr; {{ breakdown.recency_score }}</span>
+            <span class="metric-rating"><span class="star">&#9733;</span>{{ breakdown.recency_score }}</span>
+            <div class="mini-heat-track" title="Score: {{ breakdown.recency_score }} / 5">
+                <div class="mini-heat-marker" style="left: {{ (breakdown.recency_score / 5 * 100) }}%;"></div>
+            </div>
         </li>
         <li>
+            <span class="metric-raw">{{ breakdown.issues_raw | round | int }}</span>
             <span class="metric-name">{{ breakdown.issue_label }}</span>
-            <span>{{ breakdown.issues_raw }} &rarr; {{ breakdown.issue_score }}</span>
+            <span class="metric-rating"><span class="star">&#9733;</span>{{ breakdown.issue_score }}</span>
+            <div class="mini-heat-track" title="Score: {{ breakdown.issue_score }} / 5">
+                <div class="mini-heat-marker" style="left: {{ (breakdown.issue_score / 5 * 100) }}%;"></div>
+            </div>
         </li>
         <li>
+            <span class="metric-raw">{{ breakdown.popularity_raw }}</span>
             <span class="metric-name">Popularity (log-scaled)</span>
-            <span>{{ breakdown.popularity_raw }} &rarr; {{ breakdown.pop_score }}</span>
+            <span class="metric-rating"><span class="star">&#9733;</span>{{ breakdown.pop_score }}</span>
+            <div class="mini-heat-track" title="Score: {{ breakdown.pop_score }} / 5">
+                <div class="mini-heat-marker" style="left: {{ (breakdown.pop_score / 5 * 100) }}%;"></div>
+            </div>
         </li>
         <li>
+            <span class="metric-raw">{{ breakdown.final_score }}</span>
             <span class="metric-name">Final score</span>
-            <span>{{ breakdown.final_score }} / 5</span>
+            <span class="metric-rating"><span class="star">&#9733;</span>{{ breakdown.final_score }}</span>
+            <div class="mini-heat-track" title="Score: {{ breakdown.final_score }} / 5">
+                <div class="mini-heat-marker" style="left: {{ (breakdown.final_score / 5 * 100) }}%;"></div>
+            </div>
         </li>
     </ul>
   </div>
@@ -238,6 +423,23 @@
 </footer>
 
 <script>
+function shareResults() {
+    const url = {{ share_url | tojson }};
+    const title = {{ ("Repo Quality Result — " ~ result.repo) | tojson }};
+
+    if (navigator.share) {
+        navigator.share({ title: title, url: url }).catch(() => {});
+        return;
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(url).then(() => {
+            alert("Link copied to clipboard!");
+        }).catch(() => fallbackCopy(url));
+    } else {
+        fallbackCopy(url);
+    }
+}
+
 function copyBadge() {
     const text = document.getElementById("badgeBlock").textContent.trim();
     if (navigator.clipboard && navigator.clipboard.writeText) {
