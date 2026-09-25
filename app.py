@@ -1,17 +1,13 @@
 #!/usr/bin/env python3
 
 import os
-import io
+import math
 import json
-import base64
 import logging
 import traceback
 from datetime import date, datetime, timezone, timedelta
 from flask import Flask, render_template, request, jsonify, url_for
-import matplotlib
-matplotlib.use("Agg")
-
-import matplotlib.pyplot as plt
+from markupsafe import Markup
 import numpy as np
 
 from check_bioinfo_testing import scan_repo
@@ -242,15 +238,7 @@ def get_repo_quality(repo_url, token):
     if not result:
         raise RuntimeError("Scan failed")
 
-    # GitHub's GraphQL API returns `repository: null` both when a repo
-    # truly doesn't exist AND when it exists but the token can't see it
-    # (e.g. a private repo it has no access to) — there's no way to tell
-    # those apart from the response, so scan_repo surfaces both as this
-    # same "error" string. Left unchecked, every other field on `result`
-    # stays at its default ("" / 0), so the app would otherwise silently
-    # score a private/nonexistent repo using bogus all-zero data instead
-    # of failing. Catch it here, before anything downstream trusts those
-    # fields.
+
     if result.get("error"):
         err = str(result["error"])
         err_lower = err.lower()
@@ -329,83 +317,145 @@ def get_repo_quality(repo_url, token):
 
 
 # =====================================================
-# RADAR CHART → BASE64 PNG
+# RADAR CHART → INLINE SVG (no charting library, no image)
 # =====================================================
-def make_radar_chart(result):
-    labels = ["Days Since Last Commit", result["issue_metric_label"], "Popularity"]
+# Only 3 axes, so the geometry is just a triangle — plain trig, no need for
+# matplotlib. Building it as raw <svg> markup means it's part of the page's
+# own DOM, so it can use the site's real CSS variables and fonts (var(--…))
+# directly instead of being a separately-styled, rasterized PNG.
+RADAR_SIZE = 380
+RADAR_CENTER = RADAR_SIZE / 2
+RADAR_OUTER_R = 100
+RADAR_INNER_OFFSET = 0.15   # inner-triangle baseline, so a 0 on every axis
+                            # still traces a visible (small) triangle
+RADAR_LABEL_R = RADAR_OUTER_R * 1.42
 
-    raw_vals = np.array([
+
+def _radar_theta(axis_index, n=3):
+    return math.pi / 2 - axis_index * (2 * math.pi / n)
+
+
+def _radar_point(axis_index, frac, n=3):
+    """frac in [0, 1]: 0 = inner-offset boundary, 1 = outer radius."""
+    theta = _radar_theta(axis_index, n)
+    inner_r = RADAR_OUTER_R * RADAR_INNER_OFFSET
+    r = inner_r + frac * (RADAR_OUTER_R - inner_r)
+    x = RADAR_CENTER + r * math.cos(theta)
+    y = RADAR_CENTER - r * math.sin(theta)
+    return x, y
+
+
+def _wrap_label(text, max_len=13):
+    """Break a long axis label onto a couple of lines so it doesn't run
+    past the edge of the chart, without needing a text-layout library."""
+    words = text.split()
+    lines, current = [], ""
+    for w in words:
+        trial = f"{current} {w}".strip()
+        if len(trial) > max_len and current:
+            lines.append(current)
+            current = w
+        else:
+            current = trial
+    if current:
+        lines.append(current)
+    return lines or [text]
+
+
+def _points_attr(points):
+    return " ".join(f"{x:.1f},{y:.1f}" for x, y in points)
+
+
+def build_radar_svg(result):
+    """Build the 3-axis (recency / issues / popularity) radar as a small,
+    self-contained inline SVG string. Geometry mirrors the old matplotlib
+    version exactly: each axis is normalized against its own worst-case
+    anchor (0 to RECENCY_DAYS_ANCHORS[-1], etc.), clamped to [0, 1], then
+    plotted on top of the inner-triangle baseline above."""
+    n = 3
+    labels = ["Days Since Last Commit", result["issue_metric_label"], "Popularity"]
+    raw_vals = [
         result["days_since_last_commit"],
         result["issue_metric_raw"],
         result["popularity"],
-    ])
-
-    min_vals = np.array([0.0, 0.0, 0.0])
-    max_vals = np.array([
+    ]
+    max_vals = [
         float(RECENCY_DAYS_ANCHORS[-1]),
         float(ISSUE_DAYS_ANCHORS[-1]),
         float(POPULARITY_LOG10_ANCHORS[-1]),
-    ])
+    ]
+    fracs = [
+        max(0.0, min(1.0, raw / mv)) if mv else 0.0
+        for raw, mv in zip(raw_vals, max_vals)
+    ]
 
-    norm_vals = np.clip((raw_vals - min_vals) / (max_vals - min_vals + 1e-9), 0, 1)
+    outer_pts = [_radar_point(i, 1.0, n) for i in range(n)]
+    inner_pts = [_radar_point(i, 0.0, n) for i in range(n)]
+    mid_pts = [_radar_point(i, 0.5, n) for i in range(n)]
+    threeq_pts = [_radar_point(i, 0.75, n) for i in range(n)]
+    data_pts = [_radar_point(i, f, n) for i, f in enumerate(fracs)]
 
-    inner_offset = 0.15
-    shifted_vals = inner_offset + norm_vals * (1 - inner_offset)
+    axis_scores = [
+        result["recency_score_1to5"],
+        result["issue_score_1to5"],
+        result["pop_score_1to5"],
+    ]
 
-    n = len(labels)
-    angles = np.linspace(0, 2 * np.pi, n, endpoint=False)
-    angles = np.concatenate([angles, [angles[0]]])
-    plot_vals = np.concatenate([shifted_vals, [shifted_vals[0]]])
+    # Native <title> elements — a real browser tooltip on hover, no JS needed.
+    axis_tooltips = [
+        f"{labels[0]}: {raw_vals[0]:.0f} days",
+        f"{labels[1]}: {raw_vals[1]:.0f} days",
+        f"{labels[2]}: {raw_vals[2]:.2f} (log\u2081\u2080 scale)",
+    ]
 
-    fig, ax = plt.subplots(figsize=(7, 7), subplot_kw=dict(polar=True))
-    ax.set_theta_offset(np.pi / 2)
-    ax.set_theta_direction(-1)
+    spokes = "".join(
+        f'<line x1="{ix:.1f}" y1="{iy:.1f}" x2="{ox:.1f}" y2="{oy:.1f}" class="radar-grid-line" />'
+        for (ix, iy), (ox, oy) in zip(inner_pts, outer_pts)
+    )
 
-    inner_triangle = np.ones(n) * inner_offset
-    inner_triangle = np.concatenate([inner_triangle, [inner_triangle[0]]])
-    ax.plot(angles, inner_triangle, "--", color="gray", linewidth=1)
+    # Small marker dot at each vertex 
+    markers = "".join(
+        f'<circle cx="{x:.1f}" cy="{y:.1f}" r="4.5" class="radar-data-point" '
+        f'data-tooltip="{tip.replace(chr(34), "&quot;")}" />'
+        for (x, y), tip in zip(data_pts, axis_tooltips)
+    )
 
-    outer_triangle = np.ones(n)
-    outer_triangle = np.concatenate([outer_triangle, [outer_triangle[0]]])
-    ax.plot(angles, outer_triangle, "--", color="gray", linewidth=1)
-
-    for frac in [0.5, 0.75]:
-        r = inner_offset + frac * (1 - inner_offset)
-        tri = np.ones(n) * r
-        tri = np.concatenate([tri, [tri[0]]])
-        ax.plot(angles, tri, "--", color="gray", alpha=0.4)
-
+    label_svgs = []
     for i in range(n):
-        ax.plot([angles[i], angles[i]], [inner_offset, 1], color="gray", alpha=0.5)
+        theta = _radar_theta(i, n)
+        lx = RADAR_CENTER + RADAR_LABEL_R * math.cos(theta)
+        ly = RADAR_CENTER - RADAR_LABEL_R * math.sin(theta)
+        anchor = ["middle", "start", "end"][i]
+        lines = _wrap_label(labels[i])
+        score_line = f"\u2605 {axis_scores[i]:.1f}"
+        total_lines = len(lines) + 1
+        start_dy = -((total_lines - 1) * 0.6)
 
-    ax.plot(angles, plot_vals, linewidth=2, color="tab:blue")
-    ax.fill(angles, plot_vals, alpha=0.3, color="tab:blue")
+        tspan_parts = [
+            f'<tspan x="{lx:.1f}" dy="{(start_dy if j == 0 else 1.2):.2f}em">{line}</tspan>'
+            for j, line in enumerate(lines)
+        ]
+        tspan_parts.append(
+            f'<tspan x="{lx:.1f}" dy="1.2em" class="radar-label-score">{score_line}</tspan>'
+        )
+        tspans = "".join(tspan_parts)
 
-    ax.set_xticks(angles[:-1])
-    ax.set_xticklabels(labels)
-    ax.set_yticklabels([])
+        label_svgs.append(
+            f'<text x="{lx:.1f}" y="{ly:.1f}" text-anchor="{anchor}" class="radar-label">{tspans}</text>'
+        )
 
-    ax.set_title(
-        f"Radar Chart (Inner Triangle Baseline)\n{result['repo']}",
-        fontsize=16, fontweight="bold"
-    )
+    svg = f'''<svg viewBox="0 0 {RADAR_SIZE} {RADAR_SIZE}" class="radar-svg" role="img" aria-label="Radar chart of recency, issue backlog, and popularity">
+  <polygon points="{_points_attr(outer_pts)}" class="radar-ring radar-ring-outer" />
+  <polygon points="{_points_attr(threeq_pts)}" class="radar-ring radar-ring-mid" />
+  <polygon points="{_points_attr(mid_pts)}" class="radar-ring radar-ring-mid" />
+  <polygon points="{_points_attr(inner_pts)}" class="radar-ring radar-ring-inner" />
+  {spokes}
+  <polygon points="{_points_attr(data_pts)}" class="radar-data" />
+  {markers}
+  {''.join(label_svgs)}
+</svg>'''
 
-    ax.text(
-        0.5, -0.10,
-        f"Quality Score: {result['final_score_1to5']:.2f} / 5",
-        ha="center",
-        transform=ax.transAxes,
-        fontsize=14, fontweight="bold"
-    )
-
-    buf = io.BytesIO()
-    plt.tight_layout()
-    plt.savefig(buf, format="png")
-    buf.seek(0)
-    encoded = base64.b64encode(buf.getvalue()).decode("utf-8")
-    plt.close(fig)
-
-    return encoded
+    return Markup(svg)
 
 
 def build_badge(score):
@@ -439,7 +489,7 @@ def index():
         if repo_url:
             try:
                 result = get_repo_quality(repo_url, GITHUB_TOKEN)
-                chart = make_radar_chart(result)
+                radar_svg = build_radar_svg(result)
                 badge_url, markdown = build_badge(result["final_score_1to5"])
                 save_to_history(result)
 
@@ -449,7 +499,7 @@ def index():
                 return render_template(
                     "result.html",
                     result=result,
-                    chart_data=chart,
+                    radar_svg=radar_svg,
                     breakdown={
                         "days_raw": result["days_since_last_commit"],
                         "last_commit_date": result["last_commit_date"],

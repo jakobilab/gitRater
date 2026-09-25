@@ -221,7 +221,53 @@
     box-shadow: 0 0 0 1.5px #fff, 0 1px 3px rgba(0,0,0,0.3);
   }
   .chart-wrap { text-align: center; }
-  .chart-wrap img { max-width: 100%; height: auto; border-radius: 8px; }
+  .radar-wrap { position: relative; display: flex; justify-content: center; padding: 8px 4px 0; }
+  .radar-tooltip {
+    position: absolute;
+    pointer-events: none;
+    background: var(--az-blue);
+    color: #fff;
+    padding: 6px 10px;
+    border-radius: 6px;
+    font-size: 0.8rem;
+    font-family: var(--font-sans);
+    font-weight: 600;
+    white-space: nowrap;
+    opacity: 0;
+    transform: translate(-50%, calc(-100% - 10px));
+    transition: opacity .12s ease;
+    z-index: 10;
+    box-shadow: 0 2px 8px rgba(12, 35, 75, 0.25);
+  }
+  .radar-tooltip.visible { opacity: 1; }
+  .radar-svg { width: 100%; max-width: 560px; height: auto; overflow: visible; }
+  .radar-ring { fill: none; stroke: var(--az-coolgray); stroke-width: 1; stroke-dasharray: 4 3; }
+  .radar-ring-mid { opacity: 0.6; }
+  .radar-ring-outer, .radar-ring-inner { stroke: #c7cfd4; }
+  .radar-grid-line { stroke: var(--az-coolgray); stroke-width: 1; opacity: 0.8; }
+  .radar-data {
+    fill: var(--az-oasis);
+    fill-opacity: 0.35;
+    stroke: var(--az-azurite);
+    stroke-width: 2.5;
+    stroke-linejoin: round;
+  }
+  .radar-data-point { fill: var(--az-azurite); stroke: #fff; stroke-width: 1.5; cursor: help; }
+  .radar-label {
+    fill: #555;
+    font-size: 11px;
+    font-weight: 600;
+    font-family: var(--font-sans);
+  }
+  .radar-label-score { fill: var(--az-red); font-weight: 700; }
+  .radar-total {
+    margin-top: 20px;
+    text-align: center;
+    font-size: 0.95rem;
+    color: var(--az-blue);
+  }
+  .radar-total .star { color: #E8A33D; margin-right: 4px; }
+  .radar-total strong { color: var(--az-red); font-size: 1.3rem; font-weight: 700; }
   .badge-block {
     background: var(--az-coolgray);
     padding: 14px 16px;
@@ -393,7 +439,13 @@
 
   <div class="card chart-wrap">
     <h2 style="text-align:left;">Radar view</h2>
-    <img src="data:image/png;base64,{{ chart_data }}" alt="Radar chart of repo quality components">
+    <div class="radar-wrap">
+        {{ radar_svg }}
+        <div class="radar-tooltip" id="radarTooltip"></div>
+    </div>
+    <div class="radar-total">
+        <span class="star">&#9733;</span>Overall Quality Score: <strong>{{ breakdown.final_score }}</strong> / 5
+    </div>
   </div>
 
   <div class="card">
@@ -423,6 +475,28 @@
 </footer>
 
 <script>
+(function () {
+    const wrap = document.querySelector(".radar-wrap");
+    const tooltip = document.getElementById("radarTooltip");
+    if (!wrap || !tooltip) return;
+
+    const dots = wrap.querySelectorAll(".radar-data-point");
+    dots.forEach(function (dot) {
+        dot.addEventListener("mouseenter", function () {
+            tooltip.textContent = dot.getAttribute("data-tooltip") || "";
+            tooltip.classList.add("visible");
+        });
+        dot.addEventListener("mousemove", function (e) {
+            const rect = wrap.getBoundingClientRect();
+            tooltip.style.left = (e.clientX - rect.left) + "px";
+            tooltip.style.top = (e.clientY - rect.top) + "px";
+        });
+        dot.addEventListener("mouseleave", function () {
+            tooltip.classList.remove("visible");
+        });
+    });
+})();
+
 function shareResults() {
     const url = {{ share_url | tojson }};
     const title = {{ ("Repo Quality Result — " ~ result.repo) | tojson }};
